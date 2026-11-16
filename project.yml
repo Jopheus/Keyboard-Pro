@@ -1,0 +1,49 @@
+# XcodeGen project file — the build server turns this into an Xcode project.
+name: KeyboardPro
+options:
+  bundleIdPrefix: com.example.keyboardpro
+  deploymentTarget:
+    iOS: "15.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    TARGETED_DEVICE_FAMILY: "1"
+targets:
+  KeyboardPro:
+    type: application
+    platform: iOS
+    sources: [App]
+    scheme: {}
+    info:
+      path: Supporting/App-Info.plist
+      properties:
+        CFBundleDisplayName: Keyboard Pro
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.keyboardpro
+    dependencies:
+      - target: Keyboard
+        embed: true
+  Keyboard:
+    type: app-extension
+    platform: iOS
+    sources: [Keyboard]
+    info:
+      path: Supporting/Keyboard-Info.plist
+      properties:
+        CFBundleDisplayName: Keyboard Pro
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.keyboard-service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).KeyboardViewController
+          NSExtensionAttributes:
+            IsASCIICapable: false
+            PrefersRightToLeft: false
+            PrimaryLanguage: en-US
+            RequestsOpenAccess: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.keyboardpro.keyboard
