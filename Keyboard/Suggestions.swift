@@ -10,6 +10,7 @@ struct Suggestion {
     let title: String     // what the bar shows
     let text: String      // the word itself
     let isAdd: Bool       // true = "add this word to my dictionary"
+    var isPaste = false   // true = "paste the code I copied"
 }
 
 final class SuggestionEngine {
