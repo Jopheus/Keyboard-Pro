@@ -37,7 +37,7 @@ final class KBSettings {
 
     /// How long a key must be held before the symbol is typed (milliseconds).
     var longPressMs: Double {
-        get { min(max(double("longPressMs", 300), 150), 800) }
+        get { min(max(double("longPressMs", 250), 150), 800) }
         set { d.set(newValue, forKey: "longPressMs") }
     }
     var suggestionsOn: Bool {
@@ -57,29 +57,102 @@ final class KBSettings {
         get { int("longHaptic", 2) }
         set { d.set(newValue, forKey: "longHaptic") }
     }
-    /// 0 = follow the iPhone, 1 = light, 2 = dark
+    /// 0 = follow the iPhone, 1 = light, 2 = dark, 3 = glass (frosted, follows the iPhone)
     var theme: Int {
         get { int("theme", 0) }
         set { d.set(newValue, forKey: "theme") }
     }
-    /// Switch feel: 0 blue, 1 brown, 2 red, 3 silent, 4 custom
+    /// Tac Tile profile: 0 blue, 1 brown, 2 red, 3 tofu, 4 custom
     var switchProfile: Int {
         get { int("switchProfile", 1) }
         set { d.set(newValue, forKey: "switchProfile") }
     }
-    /// Custom profile sound, each 0…1
-    var customVolume: Double {
-        get { min(max(double("customVolume", 0.7), 0), 1) }
-        set { d.set(newValue, forKey: "customVolume") }
+    /// Sound pack used by the Custom profile (file prefix, see SoundPack.all).
+    var customPack: String {
+        get { SoundPack.named(d.string(forKey: "customPack") ?? "Cream").file }
+        set { d.set(newValue, forKey: "customPack") }
     }
-    var customPitch: Double {
-        get { min(max(double("customPitch", 0.5), 0), 1) }
-        set { d.set(newValue, forKey: "customPitch") }
+    /// Offer a "Paste code" button when a copied number is on the clipboard.
+    var pasteCodesOn: Bool {
+        get { bool("pasteCodesOn", true) }
+        set { d.set(newValue, forKey: "pasteCodesOn") }
     }
-    var customClick: Double {
-        get { min(max(double("customClick", 0.5), 0), 1) }
-        set { d.set(newValue, forKey: "customClick") }
+    /// The keys either side of the space bar: what they type, and whether they show.
+    var leftKey: String {
+        get { nonEmpty(d.string(forKey: "leftKey")) ?? Self.defaultLeftKey }
+        set { d.set(newValue, forKey: "leftKey") }
     }
+    var rightKey: String {
+        get { nonEmpty(d.string(forKey: "rightKey")) ?? Self.defaultRightKey }
+        set { d.set(newValue, forKey: "rightKey") }
+    }
+    var leftKeyShown: Bool {
+        get { bool("leftKeyShown", true) }
+        set { d.set(newValue, forKey: "leftKeyShown") }
+    }
+    var rightKeyShown: Bool {
+        get { bool("rightKeyShown", true) }
+        set { d.set(newValue, forKey: "rightKeyShown") }
+    }
+    /// Third shortcut key: at the end of the A–L row.
+    var rowKey: String {
+        get { nonEmpty(d.string(forKey: "rowKey")) ?? Self.defaultRowKey }
+        set { d.set(newValue, forKey: "rowKey") }
+    }
+    var rowKeyShown: Bool {
+        get { bool("rowKeyShown", true) }
+        set { d.set(newValue, forKey: "rowKeyShown") }
+    }
+    static let defaultLeftKey = ","
+    static let defaultRightKey = "."
+    /// Special value: the key pastes the copied text instead of typing a character.
+    static let pasteAction = "{paste}"
+    static let defaultRowKey = KBSettings.pasteAction
+
+    /// How a shortcut key's value is shown in settings.
+    static func displayName(_ value: String) -> String {
+        value == pasteAction ? "Paste" : value
+    }
+
+    /// The three shortcut keys by number: 0 left of space, 1 right of space,
+    /// 2 end of the A–L row.
+    static let shortcutNames = ["Left of space", "Right of space", "End of A–L row"]
+    static let shortcutDefaults = [KBSettings.defaultLeftKey, KBSettings.defaultRightKey, KBSettings.defaultRowKey]
+
+    func shortcutKey(_ index: Int) -> String {
+        switch index {
+        case 0:  return leftKey
+        case 1:  return rightKey
+        default: return rowKey
+        }
+    }
+    func setShortcutKey(_ index: Int, _ value: String) {
+        switch index {
+        case 0:  leftKey = value
+        case 1:  rightKey = value
+        default: rowKey = value
+        }
+    }
+    func shortcutShown(_ index: Int) -> Bool {
+        switch index {
+        case 0:  return leftKeyShown
+        case 1:  return rightKeyShown
+        default: return rowKeyShown
+        }
+    }
+    func setShortcutShown(_ index: Int, _ value: Bool) {
+        switch index {
+        case 0:  leftKeyShown = value
+        case 1:  rightKeyShown = value
+        default: rowKeyShown = value
+        }
+    }
+
+    private func nonEmpty(_ value: String?) -> String? {
+        guard let value = value, !value.isEmpty else { return nil }
+        return value
+    }
+
     var customWords: [String] {
         get { d.stringArray(forKey: "customWords") ?? [] }
         set { d.set(newValue, forKey: "customWords") }

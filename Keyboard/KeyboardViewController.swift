@@ -1,12 +1,17 @@
 //
 //  KeyboardViewController.swift
-//  Keyboard Pro for iPhone  (version 7)
+//  Keyboard Pro for iPhone  (version 12)
 //
 //  - Number row always on top
 //  - Long-press any letter to type a symbol (hint shown in the key corner)
-//  - Emoji page (smiley key on the bottom row)
-//  - Suggestion bar: word completion, auto-correct, add words to dictionary
+//  - Emoji page with categories (smiley key on the bottom row)
+//  - Shortcut keys: either side of the space bar (, and .) and at the end
+//    of the A–L row (Paste)
+//  - Hold shift to turn on caps lock (or double-tap it)
+//  - Suggestion bar: word completion, auto-correct, add words, paste copied code
 //  - Settings (gear button): theme, switch sound + vibration, Max options
+//  - Glass theme: frosted Liquid Glass keys on iOS 26 (follows the iPhone's
+//    Clear / Tinted setting), frosted blur keys on older iOS
 //  - Key preview popup, shift / caps lock (double-tap), hold-to-delete,
 //    double-space for ". ", auto-capitalise, ?123 and =\< symbol pages
 //
@@ -15,10 +20,46 @@
 
 import UIKit
 
+// MARK: - Glass look
+
+/// Builds the frosted glass behind each key in the Glass theme.
+/// iOS 26: real Liquid Glass (UIGlassEffect). iOS automatically applies the
+/// user's Settings > Display & Brightness > Liquid Glass choice (Clear / Tinted).
+/// iOS 15–18: a thin blur material. Either way a light frost tint is laid on top
+/// so letters stay easy to read over busy backgrounds.
+enum KeyGlass {
+    static let cornerRadius: CGFloat = 8.5
+
+    /// The frost tint. Character keys are lighter than function keys, like the
+    /// system keyboard. Raise the alpha values for more frost, lower for clearer glass.
+    static func frost(function: Bool, dark: Bool) -> UIColor {
+        switch (function, dark) {
+        case (false, false): return UIColor(white: 1.0, alpha: 0.55)
+        case (true, false):  return UIColor(red: 0.62, green: 0.65, blue: 0.70, alpha: 0.40)
+        case (false, true):  return UIColor(white: 0.55, alpha: 0.30)
+        case (true, true):   return UIColor(white: 0.18, alpha: 0.40)
+        }
+    }
+
+    static func apply(to view: UIVisualEffectView, function: Bool, dark: Bool) {
+        let tint = frost(function: function, dark: dark)
+        #if compiler(>=6.2)     // built with Xcode 26 or later
+        if #available(iOS 26.0, *) {
+            let glass = UIGlassEffect(style: .regular)   // .regular is the frosted style
+            glass.tintColor = tint
+            UIView.performWithoutAnimation { view.effect = glass }
+            return
+        }
+        #endif
+        view.effect = UIBlurEffect(style: dark ? .systemThinMaterialDark : .systemThinMaterialLight)
+        view.contentView.backgroundColor = tint
+    }
+}
+
 // MARK: - Key view
 
 final class KeyButton: UIControl {
-    enum Kind { case char, shift, delete, page, globe, space, ret }
+    enum Kind { case char, shift, delete, page, globe, space, ret, paste }
 
     let kind: Kind
     let base: String            // lowercase letter / symbol
@@ -34,6 +75,22 @@ final class KeyButton: UIControl {
         ? UIColor(white: 0.42, alpha: 1) : .white }
     static let functionColor = UIColor { $0.userInterfaceStyle == .dark
         ? UIColor(white: 0.27, alpha: 1) : UIColor(red: 0.67, green: 0.69, blue: 0.73, alpha: 1) }
+
+    /// Look of every key, set by the keyboard theme. Changing it restyles
+    /// keys that already exist (emoji bar, current page) straight away.
+    enum Style { case solid, glass }
+    static var style: Style = .solid {
+        didSet { if style != oldValue { NotificationCenter.default.post(name: styleChanged, object: nil) } }
+    }
+    static let styleChanged = Notification.Name("KeyButton.styleChanged")
+
+    private var glassView: UIVisualEffectView?
+    private var glassLook: (function: Bool, dark: Bool)?
+
+    /// Glass is skipped when Reduce Transparency is on (Accessibility setting).
+    private var usesGlass: Bool {
+        Self.style == .glass && !UIAccessibility.isReduceTransparencyEnabled
+    }
 
     init(kind: Kind, title: String = "", output: String = "", alternate: String? = nil,
          icon: String? = nil, function: Bool = false) {
@@ -83,7 +140,11 @@ final class KeyButton: UIControl {
             hintLabel.topAnchor.constraint(equalTo: topAnchor, constant: 1),
             hintLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
         ])
-        updateColor()
+        NotificationCenter.default.addObserver(self, selector: #selector(styleDidChange),
+                                               name: Self.styleChanged, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(styleDidChange),
+            name: UIAccessibility.reduceTransparencyStatusDidChangeNotification, object: nil)
+        applyStyle()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
@@ -91,7 +152,43 @@ final class KeyButton: UIControl {
     override func layoutSubviews() {
         super.layoutSubviews()
         // An explicit shadow path lets iOS draw the shadow cheaply.
-        layer.shadowPath = UIBezierPath(roundedRect: bounds, cornerRadius: 6).cgPath
+        layer.shadowPath = UIBezierPath(roundedRect: bounds, cornerRadius: layer.cornerRadius).cgPath
+    }
+
+    override func traitCollectionDidChange(_ previous: UITraitCollection?) {
+        super.traitCollectionDidChange(previous)
+        if previous?.userInterfaceStyle != traitCollection.userInterfaceStyle {
+            glassLook = nil
+            updateColor()
+        }
+    }
+
+    @objc private func styleDidChange() { applyStyle() }
+
+    /// Switches between solid keys and frosted glass keys.
+    private func applyStyle() {
+        let glass = usesGlass
+        let radius: CGFloat = glass ? KeyGlass.cornerRadius : 6
+        layer.cornerRadius = radius
+        layer.cornerCurve = .continuous
+        layer.shadowOpacity = glass ? 0 : 0.25      // glass casts no hard shadow
+        if glass, glassView == nil {
+            let v = UIVisualEffectView(effect: nil)
+            v.isUserInteractionEnabled = false
+            v.frame = bounds
+            v.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            v.layer.cornerRadius = radius
+            v.layer.cornerCurve = .continuous
+            v.clipsToBounds = true
+            insertSubview(v, at: 0)                 // behind the labels
+            glassView = v
+        } else if !glass {
+            glassView?.removeFromSuperview()
+            glassView = nil
+        }
+        glassLook = nil
+        setNeedsLayout()
+        updateColor()
     }
 
     func setTitle(_ text: String) { titleLabel.text = text }
@@ -111,7 +208,17 @@ final class KeyButton: UIControl {
     private func updateColor() {
         // Character keys show a popup instead of changing colour.
         let pressed = isHighlighted && kind != .char
-        backgroundColor = (isFunctionKey != pressed) ? Self.functionColor : Self.normalColor
+        let functionLook = (isFunctionKey != pressed)
+        if let glassView = glassView {
+            backgroundColor = .clear
+            let look = (function: functionLook, dark: traitCollection.userInterfaceStyle == .dark)
+            if glassLook?.function != look.function || glassLook?.dark != look.dark {
+                glassLook = look
+                KeyGlass.apply(to: glassView, function: look.function, dark: look.dark)
+            }
+        } else {
+            backgroundColor = functionLook ? Self.functionColor : Self.normalColor
+        }
     }
 }
 
@@ -127,6 +234,29 @@ final class EmojiCell: UICollectionViewCell {
         label.frame = contentView.bounds
         label.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         contentView.addSubview(label)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
+
+    func show(_ text: String, isText: Bool) {
+        label.text = text
+        label.font = isText ? .systemFont(ofSize: 13, weight: .medium) : .systemFont(ofSize: 28)
+        label.adjustsFontSizeToFitWidth = isText
+        label.minimumScaleFactor = 0.6
+        label.textColor = .label
+    }
+}
+
+final class EmojiHeader: UICollectionReusableView {
+    let label = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        label.font = .systemFont(ofSize: 12, weight: .semibold)
+        label.textColor = .secondaryLabel
+        label.frame = bounds.insetBy(dx: 6, dy: 0)
+        label.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        addSubview(label)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
@@ -189,20 +319,8 @@ final class KeyboardViewController: UIInputViewController {
         ["®", "™", "✓", "§", "…", "¿", "¡"],
     ]
 
-    // Emoji shown on the emoji page. Add or remove freely.
-    private let emojis: [String] = (
-        "😀😃😄😁😆😅😂🤣😊😇🙂🙃😉😌😍🥰😘😗😙😚😋😛😜🤪😝🤑🤗🤭🤫🤔🤐🤨😐😑😶😏😒🙄😬🤥"
-        + "😔😪🤤😴😷🤒🤕🤢🤮🤧🥵🥶🥴😵🤯🤠🥳😎🤓🧐😕😟🙁😮😯😲😳🥺😦😧😨😰😥😢😭😱😖😣😞😓😩😫🥱"
-        + "😤😡😠🤬😈👿💀💩🤡👻👽🤖😺😸😹😻🙈🙉🙊"
-        + "👍👎👌🤏🤞🤟🤘🤙👈👉👆👇👋🤚🖐✋🖖👏🙌🤝🙏💪✍👀"
-        + "❤🧡💛💚💙💜🖤🤍🤎💔💕💞💓💗💖💘💝💯💢💥💫💦💨🔥⭐🌟✨⚡🎉🎊🎁🎂🏆🥇"
-        + "🐶🐱🐭🐹🐰🦊🐻🐼🐨🐯🦁🐮🐷🐸🐵🐔🐧🐦🦆🦉🐴🦄🐝🦋🐢🐍🐙🐬🐳🐟"
-        + "🌸🌹🌻🌴🌵🍀🍁🌈☀🌙☁☔❄🌊"
-        + "🍎🍊🍋🍌🍉🍇🍓🍑🍍🥭🥑🍅🌽🥕🍞🧀🍗🍔🍟🍕🌭🌮🍣🍜🍚🍦🍩🍪🍫🍿☕🍵🍺🍷🥤"
-        + "⚽🏀🏈⚾🎾🏐🎱🏓🏸🎮🎲🎵🎶🎤🎧🎬📷"
-        + "🚗🚕🚌🚓🚑🚒🚚🚲🛵✈🚀🚢🏠🏢🏥🏫⛽🗺"
-        + "📱💻⌚📞📺💡🔋🔑🔒🔔📌📎✂📝📚📅📈💰💳💵📦🛒⏰✅❌❓❗⚠🚫💤"
-    ).map { String($0) }
+    // Emoji shown on the emoji page: see EmojiData.swift.
+    private let emojiGroups = EmojiData.groups
 
     private enum Page { case letters, symbols, more, emoji, settings }
     private enum Shift { case off, on, locked }
@@ -229,6 +347,14 @@ final class KeyboardViewController: UIInputViewController {
     private var emojiPanel: UIView?
     private var emojiList: UICollectionView?
     private var emojiBarKeys: [KeyButton] = []
+    private var emojiBar: UIView?
+    private var emojiTabs: UIView?
+    private var emojiTabButtons: [UIButton] = []
+    private var pickBanner: UIView?
+    private let pickLabel = UILabel()
+    /// Set while choosing an emoji for a space-bar key (0 = left, 1 = right).
+    private var pickingKeySide: Int?
+    private var settingsStart = SettingsPanel.Start.main
 
     private var settingsPanel: SettingsPanel?
     private let suggestionBar = UIStackView()
@@ -236,11 +362,15 @@ final class KeyboardViewController: UIInputViewController {
     private var suggestions: [Suggestion] = []
     private var lastCorrection: (original: String, corrected: String)?
     private var rejectedCorrections = Set<String>()
+    private var clipboardHasCode = false
+    private var lastClipboardChange = -1
 
     private weak var pendingKey: KeyButton?   // key held down but not typed yet
     private var longPressFired = false
     private var longPressTimer: Timer?
     private var deleteTimer: Timer?
+    private var shiftHoldTimer: Timer?
+    private var shiftLockedByHold = false
     private let popup = UILabel()
 
     private var proxy: UITextDocumentProxy { textDocumentProxy }
@@ -299,6 +429,7 @@ final class KeyboardViewController: UIInputViewController {
         let type = proxy.keyboardType ?? .default
         let numeric = (type == .decimalPad || type == .numbersAndPunctuation)
         page = numeric ? .symbols : .letters
+        pickingKeySide = nil
         manualShift = false
         if builtPage != page || builtWithGlobe != needsInputModeSwitchKey { buildKeyboard() }
         updateAutoShift()
@@ -360,14 +491,21 @@ final class KeyboardViewController: UIInputViewController {
         if page == .emoji {
             let panel = emojiPanel ?? makeEmojiPanel()
             panel.isHidden = false
-            surface.keys = emojiBarKeys
-            surface.passthroughs = emojiList.map { [$0] } ?? []
+            let picking = (pickingKeySide != nil)
+            pickBanner?.isHidden = !picking
+            emojiBar?.isHidden = picking
+            if let side = pickingKeySide {
+                pickLabel.text = "Emoji for: \(KBSettings.shortcutNames[side])"
+            }
+            surface.keys = picking ? [] : emojiBarKeys
+            surface.passthroughs = [emojiList as UIView?, emojiTabs, pickBanner].compactMap { $0 }
             return
         }
         if page == .settings {
             let panel = settingsPanel ?? makeSettingsPanel()
             panel.isHidden = false
-            panel.reload(hasFullAccess: hasFullAccess)
+            panel.reload(hasFullAccess: hasFullAccess, start: settingsStart)
+            settingsStart = .main
             surface.keys = []
             surface.passthroughs = [panel]
             return
@@ -391,11 +529,26 @@ final class KeyboardViewController: UIInputViewController {
         default:       rows = letterRows
         }
 
-        // Number row, then rows 1 and 2
-        for chars in [numberRow, rows[0], rows[1]] {
+        // Shortcut keys (settings: Shortcut keys). Typed as-is, never shifted.
+        func shortcutKey(_ text: String) -> KeyButton {
+            let key = text == KBSettings.pasteAction
+                ? KeyButton(kind: .paste, icon: "doc.on.clipboard", function: true)
+                : KeyButton(kind: .char, title: text, output: text, function: true)
+            register(key)
+            width(key, 0.1)
+            return key
+        }
+
+        // Number row, then rows 1 and 2. The A–L row ends with the third
+        // shortcut key on the letters page.
+        for (index, chars) in [numberRow, rows[0], rows[1]].enumerated() {
             let keys = chars.map { makeCharKey($0) }
             keys.forEach { width($0, 0.1) }
-            addRow(keys, fill: false)
+            if index == 2, page == .letters, settings.rowKeyShown {
+                addRow(keys + [shortcutKey(settings.rowKey)], fill: false)
+            } else {
+                addRow(keys, fill: false)
+            }
         }
 
         // Row 3: shift / page key, letters, delete
@@ -418,7 +571,7 @@ final class KeyboardViewController: UIInputViewController {
         register(del)
         addRow([left] + middle + [del], fill: false)
 
-        // Bottom row: ?123 / ABC, emoji, (globe), space, return
+        // Bottom row: ?123 / ABC, emoji, (globe), left key, space, right key, return
         var bottom: [KeyButton] = []
         let mode = KeyButton(kind: .page,
                              title: page == .letters ? "?123" : "ABC",
@@ -440,12 +593,18 @@ final class KeyboardViewController: UIInputViewController {
             bottom.append(globe)
         }
 
+        if settings.leftKeyShown { bottom.append(shortcutKey(settings.leftKey)) }
+
         let space = KeyButton(kind: .space, title: "space")
-        let ret = KeyButton(kind: .ret, icon: "return", function: true)
         register(space)
+        bottom.append(space)
+
+        if settings.rightKeyShown { bottom.append(shortcutKey(settings.rightKey)) }
+
+        let ret = KeyButton(kind: .ret, icon: "return", function: true)
         register(ret)
-        width(ret, 0.2)
-        bottom += [space, ret]
+        width(ret, 0.18)
+        bottom.append(ret)
         addRow(bottom, fill: true)
 
         NSLayoutConstraint.activate(widths)
@@ -507,6 +666,23 @@ final class KeyboardViewController: UIInputViewController {
         panel.translatesAutoresizingMaskIntoConstraints = false
         surface.addSubview(panel)
 
+        // Shown only while choosing an emoji for a space-bar key.
+        pickLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        pickLabel.textColor = .label
+        pickLabel.adjustsFontSizeToFitWidth = true
+        pickLabel.minimumScaleFactor = 0.7
+        let cancel = UIButton(type: .system)
+        cancel.setTitle("Cancel", for: .normal)
+        cancel.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
+        cancel.setContentHuggingPriority(.required, for: .horizontal)
+        cancel.addAction(UIAction { [weak self] _ in self?.finishPicking(nil) }, for: .touchUpInside)
+        let banner = UIStackView(arrangedSubviews: [pickLabel, cancel])
+        banner.axis = .horizontal
+        banner.spacing = 8
+        banner.isLayoutMarginsRelativeArrangement = true
+        banner.layoutMargins = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 6)
+        banner.isHidden = true
+
         let layout = UICollectionViewFlowLayout()
         layout.minimumInteritemSpacing = 0
         layout.minimumLineSpacing = 2
@@ -515,8 +691,24 @@ final class KeyboardViewController: UIInputViewController {
         list.dataSource = self
         list.delegate = self
         list.register(EmojiCell.self, forCellWithReuseIdentifier: "emoji")
-        list.translatesAutoresizingMaskIntoConstraints = false
-        panel.addSubview(list)
+        list.register(EmojiHeader.self,
+                      forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader,
+                      withReuseIdentifier: "header")
+
+        // Category tabs: tap to jump to a group.
+        let tabs = UIStackView()
+        tabs.axis = .horizontal
+        tabs.distribution = .fillEqually
+        emojiTabButtons = emojiGroups.enumerated().map { (index, group) -> UIButton in
+            let tab = UIButton(type: .system)
+            tab.setTitle(group.tab, for: .normal)
+            tab.titleLabel?.font = .systemFont(ofSize: 18)
+            tab.layer.cornerRadius = 6
+            tab.addAction(UIAction { [weak self] _ in self?.jumpToEmojiGroup(index) },
+                          for: .touchUpInside)
+            tabs.addArrangedSubview(tab)
+            return tab
+        }
 
         let abc = KeyButton(kind: .page, title: "ABC", output: "letters", function: true)
         let space = KeyButton(kind: .space, title: "space")
@@ -528,8 +720,12 @@ final class KeyboardViewController: UIInputViewController {
         let bar = UIStackView(arrangedSubviews: emojiBarKeys)
         bar.axis = .horizontal
         bar.spacing = 6
-        bar.translatesAutoresizingMaskIntoConstraints = false
-        panel.addSubview(bar)
+
+        let column = UIStackView(arrangedSubviews: [banner, list, tabs, bar])
+        column.axis = .vertical
+        column.spacing = 4
+        column.translatesAutoresizingMaskIntoConstraints = false
+        panel.addSubview(column)
 
         NSLayoutConstraint.activate([
             panel.leadingAnchor.constraint(equalTo: surface.leadingAnchor, constant: 3),
@@ -537,15 +733,14 @@ final class KeyboardViewController: UIInputViewController {
             panel.topAnchor.constraint(equalTo: surface.topAnchor, constant: 6),
             panel.bottomAnchor.constraint(equalTo: surface.bottomAnchor, constant: -4),
 
-            list.leadingAnchor.constraint(equalTo: panel.leadingAnchor),
-            list.trailingAnchor.constraint(equalTo: panel.trailingAnchor),
-            list.topAnchor.constraint(equalTo: panel.topAnchor),
-            list.bottomAnchor.constraint(equalTo: bar.topAnchor, constant: -6),
+            column.leadingAnchor.constraint(equalTo: panel.leadingAnchor),
+            column.trailingAnchor.constraint(equalTo: panel.trailingAnchor),
+            column.topAnchor.constraint(equalTo: panel.topAnchor),
+            column.bottomAnchor.constraint(equalTo: panel.bottomAnchor),
 
-            bar.leadingAnchor.constraint(equalTo: panel.leadingAnchor),
-            bar.trailingAnchor.constraint(equalTo: panel.trailingAnchor),
-            bar.bottomAnchor.constraint(equalTo: panel.bottomAnchor),
-            bar.heightAnchor.constraint(equalToConstant: 42),
+            softHeight(banner, 30),
+            softHeight(tabs, 30),
+            softHeight(bar, 42),
 
             abc.widthAnchor.constraint(equalTo: panel.widthAnchor, multiplier: 0.15),
             del.widthAnchor.constraint(equalTo: panel.widthAnchor, multiplier: 0.15),
@@ -554,7 +749,50 @@ final class KeyboardViewController: UIInputViewController {
 
         emojiPanel = panel
         emojiList = list
+        emojiBar = bar
+        emojiTabs = tabs
+        pickBanner = banner
+        highlightEmojiTab(0)
         return panel
+    }
+
+    private func softHeight(_ view: UIView, _ value: CGFloat) -> NSLayoutConstraint {
+        let c = view.heightAnchor.constraint(equalToConstant: value)
+        c.priority = UILayoutPriority(999)
+        return c
+    }
+
+    private func jumpToEmojiGroup(_ section: Int) {
+        guard let list = emojiList, section < emojiGroups.count,
+              !emojiGroups[section].items.isEmpty else { return }
+        list.layoutIfNeeded()
+        let first = IndexPath(item: 0, section: section)
+        if let header = list.layoutAttributesForSupplementaryElement(
+            ofKind: UICollectionView.elementKindSectionHeader, at: first) {
+            let maxY = max(0, list.contentSize.height - list.bounds.height)
+            list.setContentOffset(CGPoint(x: 0, y: min(header.frame.minY, maxY)), animated: false)
+        } else {
+            list.scrollToItem(at: first, at: .top, animated: false)
+        }
+        highlightEmojiTab(section)
+    }
+
+    private func highlightEmojiTab(_ section: Int) {
+        for (index, tab) in emojiTabButtons.enumerated() {
+            tab.backgroundColor = index == section ? KeyButton.functionColor : .clear
+        }
+    }
+
+    /// Picking an emoji for a space-bar key: called with the emoji, or nil to cancel.
+    private func finishPicking(_ value: String?) {
+        guard let side = pickingKeySide else { return }
+        if let value = value {
+            settings.setShortcutKey(side, value)
+        }
+        pickingKeySide = nil
+        settingsStart = .spaceKeys
+        page = .settings
+        buildKeyboard()
     }
 
     // MARK: Touch handling
@@ -565,7 +803,17 @@ final class KeyboardViewController: UIInputViewController {
 
     @objc private func touchDown(_ key: KeyButton) {
         commitPending()
-        feedback.keyDown(big: key.kind == .space || key.kind == .ret || key.kind == .delete)
+        if key.kind != .shift {
+            // Another key while shift is held: it's shift+letter, not a hold for caps lock.
+            shiftHoldTimer?.invalidate()
+            shiftHoldTimer = nil
+        }
+        switch key.kind {
+        case .space:  feedback.keyDown(.space)
+        case .ret:    feedback.keyDown(.enter)
+        case .delete: feedback.keyDown(.delete)
+        default:      feedback.keyDown()
+        }
 
         switch key.kind {
         case .char, .space:
@@ -583,6 +831,21 @@ final class KeyboardViewController: UIInputViewController {
                 RunLoop.main.add(timer, forMode: .common)
                 longPressTimer = timer
             }
+        case .shift:
+            // Holding shift for the long-press time turns on caps lock.
+            shiftHoldTimer?.invalidate()
+            shiftLockedByHold = false
+            let timer = Timer(timeInterval: settings.longPressMs / 1000, repeats: false) { [weak self] _ in
+                guard let self = self else { return }
+                self.shiftHoldTimer = nil
+                self.shiftLockedByHold = true
+                self.shift = .locked
+                self.manualShift = true
+                self.refreshCase()
+                Haptics.play(self.settings.longHaptic)
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            shiftHoldTimer = timer
         case .delete:
             if undoCorrection() { return }      // delete right after auto-correct = undo it
             proxy.deleteBackward()
@@ -613,11 +876,48 @@ final class KeyboardViewController: UIInputViewController {
             updateAutoShift()
             refreshSuggestions()
         case .shift:
-            tapShift()
+            shiftHoldTimer?.invalidate()
+            shiftHoldTimer = nil
+            if shiftLockedByHold {
+                shiftLockedByHold = false      // already locked by holding: leave it on
+            } else {
+                tapShift()
+            }
         case .page:
             switchPage(key.output)
+        case .paste:
+            pasteClipboard()
         case .globe:
             break
+        }
+    }
+
+    /// The Paste shortcut key: types whatever text was copied.
+    private func pasteClipboard() {
+        guard hasFullAccess else {
+            flashMessage("Turn on Full Access to paste")
+            return
+        }
+        guard let text = UIPasteboard.general.string, !text.isEmpty else {
+            flashMessage("Nothing copied")
+            return
+        }
+        proxy.insertText(text)
+        lastCorrection = nil
+        manualShift = false
+        updateAutoShift()
+        refreshSuggestions()
+    }
+
+    /// Shows a short message in the suggestion bar for a moment.
+    private func flashMessage(_ text: String) {
+        guard let slot = suggestionButtons.first else { return }
+        UIView.performWithoutAnimation {
+            slot.setTitle(text, for: .normal)
+            slot.layoutIfNeeded()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.refreshSuggestions()
         }
     }
 
@@ -630,6 +930,11 @@ final class KeyboardViewController: UIInputViewController {
             hidePopup()
         }
         if key.kind == .delete { stopDeleting() }
+        if key.kind == .shift {
+            shiftHoldTimer?.invalidate()
+            shiftHoldTimer = nil
+            shiftLockedByHold = false
+        }
     }
 
     private func commitPending() {
@@ -659,6 +964,9 @@ final class KeyboardViewController: UIInputViewController {
         longPressFired = false
         longPressTimer?.invalidate()
         longPressTimer = nil
+        shiftHoldTimer?.invalidate()
+        shiftHoldTimer = nil
+        shiftLockedByHold = false
         stopDeleting()
         hidePopup()
     }
@@ -731,6 +1039,10 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func switchPage(_ target: String) {
+        if pickingKeySide != nil {
+            finishPicking(nil)
+            return
+        }
         switch target {
         case "symbols": page = .symbols
         case "more":    page = .more
@@ -794,7 +1106,10 @@ final class KeyboardViewController: UIInputViewController {
         surface.addSubview(suggestionBar)
 
         let gear = UIButton(type: .system)
-        gear.setImage(UIImage(systemName: "gearshape"), for: .normal)
+        // 14 pt is 20% smaller than the 17 pt default; the 40 pt tap area stays.
+        gear.setImage(UIImage(systemName: "gearshape",
+                              withConfiguration: UIImage.SymbolConfiguration(pointSize: 14)),
+                      for: .normal)
         gear.tintColor = .secondaryLabel
         gear.addAction(UIAction { [weak self] _ in self?.openSettings() }, for: .touchUpInside)
         suggestionBar.addArrangedSubview(gear)
@@ -845,7 +1160,11 @@ final class KeyboardViewController: UIInputViewController {
 
     private func refreshSuggestions() {
         guard page != .emoji, page != .settings else { return }
+        checkClipboard()
         var list: [Suggestion] = []
+        if clipboardHasCode {
+            list.append(Suggestion(title: "Paste code", text: "", isAdd: false, isPaste: true))
+        }
 
         if settings.suggestionsOn {
             let context = wordContext()
@@ -876,8 +1195,12 @@ final class KeyboardViewController: UIInputViewController {
         guard index < suggestions.count else { return }
         let choice = suggestions[index]
         cancelTouches()
-        feedback.keyDown(big: false)
+        feedback.keyDown()
 
+        if choice.isPaste {
+            pasteCode()
+            return
+        }
         if choice.isAdd {
             var words = settings.customWords
             if !words.contains(where: { $0.lowercased() == choice.text.lowercased() }) {
@@ -903,6 +1226,64 @@ final class KeyboardViewController: UIInputViewController {
         refreshSuggestions()
     }
 
+    // MARK: Paste a copied code (for example a one-time code from Messages)
+
+    /// Looks at the clipboard only when it has changed. This asks iOS whether
+    /// the copied text contains a number without reading the text itself, so
+    /// iOS shows no paste prompt until the button is actually tapped.
+    private func checkClipboard() {
+        guard settings.pasteCodesOn, hasFullAccess else {
+            clipboardHasCode = false
+            return
+        }
+        let board = UIPasteboard.general
+        let change = board.changeCount
+        guard change != lastClipboardChange else { return }
+        lastClipboardChange = change
+        clipboardHasCode = false
+        guard board.hasStrings else { return }
+
+        board.detectPatterns(for: [.number]) { [weak self] result in
+            let found = ((try? result.get())?.contains(.number)) ?? false
+            DispatchQueue.main.async {
+                guard let self = self, found, change == self.lastClipboardChange else { return }
+                self.clipboardHasCode = true
+                self.refreshSuggestions()
+            }
+        }
+    }
+
+    private func pasteCode() {
+        clipboardHasCode = false            // the button goes away until something new is copied
+        if let code = Self.extractCode(UIPasteboard.general.string ?? "") {
+            proxy.insertText(code)
+            lastCorrection = nil
+        }
+        refreshSuggestions()
+    }
+
+    /// A 4–8 digit code: the whole copied text ("123 456", "123-456"), or the
+    /// first run of 4–8 digits inside a longer copied message.
+    private static func extractCode(_ text: String) -> String? {
+        func isDigit(_ c: Character) -> Bool { c.isASCII && c.isNumber }
+
+        let compact = text.filter { !($0.isWhitespace || $0 == "-") }
+        if (4...8).contains(compact.count), compact.allSatisfy(isDigit) { return compact }
+
+        var runs: [String] = []
+        var current = ""
+        for c in text {
+            if isDigit(c) {
+                current.append(c)
+            } else if !current.isEmpty {
+                runs.append(current)
+                current = ""
+            }
+        }
+        if !current.isEmpty { runs.append(current) }
+        return runs.first { (4...8).contains($0.count) }
+    }
+
     /// Pressing delete straight after an auto-correction puts the original word back.
     private func undoCorrection() -> Bool {
         guard let change = lastCorrection else { return false }
@@ -920,8 +1301,10 @@ final class KeyboardViewController: UIInputViewController {
 
     // MARK: Settings
 
-    /// Light or dark keys regardless of the iPhone's setting, or follow the iPhone.
+    /// Light or dark keys regardless of the iPhone's setting, follow the iPhone,
+    /// or frosted glass keys (which also follow the iPhone's light / dark mode).
     private func applyTheme() {
+        KeyButton.style = (settings.theme == 3) ? .glass : .solid
         switch settings.theme {
         case 1:
             view.overrideUserInterfaceStyle = .light
@@ -941,6 +1324,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func closeSettings() {
+        pickingKeySide = nil
         page = .letters
         applyMetrics(landscape: isLandscape ?? false)
         buildKeyboard()
@@ -957,10 +1341,16 @@ final class KeyboardViewController: UIInputViewController {
         }
         panel.onClearHistory = { [weak self] in self?.engine.clearHistory() }
         panel.onThemeChanged = { [weak self] in self?.applyTheme() }
+        panel.onPickEmoji = { [weak self] side in
+            guard let self = self else { return }
+            self.pickingKeySide = side
+            self.page = .emoji
+            self.buildKeyboard()
+        }
         panel.onFeedbackChanged = { [weak self] in
             guard let self = self else { return }
             self.feedback.reload(self.settings)
-            self.feedback.keyDown(big: false)       // play a sample of the new feel
+            self.feedback.keyDown()       // play a sample of the new feel
         }
         surface.addSubview(panel)
         NSLayoutConstraint.activate([
@@ -994,29 +1384,65 @@ final class KeyboardViewController: UIInputViewController {
 
 extension KeyboardViewController: UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
 
+    func numberOfSections(in collectionView: UICollectionView) -> Int {
+        emojiGroups.count
+    }
+
     func collectionView(_ collectionView: UICollectionView,
                         numberOfItemsInSection section: Int) -> Int {
-        emojis.count
+        emojiGroups[section].items.count
     }
 
     func collectionView(_ collectionView: UICollectionView,
                         cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "emoji", for: indexPath)
-        (cell as? EmojiCell)?.label.text = emojis[indexPath.item]
+        let group = emojiGroups[indexPath.section]
+        (cell as? EmojiCell)?.show(group.items[indexPath.item], isText: group.isText)
         return cell
+    }
+
+    func collectionView(_ collectionView: UICollectionView,
+                        viewForSupplementaryElementOfKind kind: String,
+                        at indexPath: IndexPath) -> UICollectionReusableView {
+        let view = collectionView.dequeueReusableSupplementaryView(
+            ofKind: kind, withReuseIdentifier: "header", for: indexPath)
+        (view as? EmojiHeader)?.label.text = emojiGroups[indexPath.section].title
+        return view
+    }
+
+    func collectionView(_ collectionView: UICollectionView,
+                        layout collectionViewLayout: UICollectionViewLayout,
+                        referenceSizeForHeaderInSection section: Int) -> CGSize {
+        CGSize(width: collectionView.bounds.width, height: 22)
     }
 
     func collectionView(_ collectionView: UICollectionView,
                         layout collectionViewLayout: UICollectionViewLayout,
                         sizeForItemAt indexPath: IndexPath) -> CGSize {
         let columns: CGFloat = collectionView.bounds.width > 500 ? 14 : 8
-        let side = floor(collectionView.bounds.width / columns)
-        return CGSize(width: max(side, 30), height: 40)
+        let side = max(floor(collectionView.bounds.width / columns), 30)
+        // WeChat text codes are wider: two emoji cells each.
+        let wide = emojiGroups[indexPath.section].isText
+        return CGSize(width: wide ? side * 2 : side, height: 40)
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         collectionView.deselectItem(at: indexPath, animated: false)
-        feedback.keyDown(big: false)
-        proxy.insertText(emojis[indexPath.item])
+        feedback.keyDown()
+        let value = emojiGroups[indexPath.section].items[indexPath.item]
+        if pickingKeySide != nil {
+            finishPicking(value)
+        } else {
+            proxy.insertText(value)
+        }
+    }
+
+    /// Keeps the category tab in step with the group being looked at.
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard scrollView === emojiList, let list = emojiList else { return }
+        let probe = CGPoint(x: 10, y: list.contentOffset.y + 30)
+        if let path = list.indexPathForItem(at: probe) {
+            highlightEmojiTab(path.section)
+        }
     }
 }
