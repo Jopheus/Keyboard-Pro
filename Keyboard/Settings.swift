@@ -48,9 +48,10 @@ final class KBSettings {
         get { bool("autocorrectOn", true) }
         set { d.set(newValue, forKey: "autocorrectOn") }
     }
-    /// 0 = off, 1 = light, 2 = medium, 3 = strong
+    /// Vibration when typing: 0 off, 1 light, 2 medium, 3 strong, 4 soft, 5 crisp
+    /// (see TapHaptic). Long press uses 0…3 only.
     var tapHaptic: Int {
-        get { int("tapHaptic", 1) }
+        get { int("tapHaptic", 2) }
         set { d.set(newValue, forKey: "tapHaptic") }
     }
     var longHaptic: Int {
@@ -59,18 +60,25 @@ final class KBSettings {
     }
     /// 0 = follow the iPhone, 1 = light, 2 = dark, 3 = glass (frosted, follows the iPhone)
     var theme: Int {
-        get { int("theme", 0) }
+        get { int("theme", 3) }
         set { d.set(newValue, forKey: "theme") }
     }
-    /// Tac Tile profile: 0 blue, 1 brown, 2 red, 3 tofu, 4 custom
-    var switchProfile: Int {
-        get { int("switchProfile", 1) }
-        set { d.set(newValue, forKey: "switchProfile") }
+    /// Tac Tile sound pack (file prefix, see SoundPack.all). Default: the Brown preset.
+    var soundPack: String {
+        get { SoundPack.named(d.string(forKey: "soundPack") ?? "Typewriter").file }
+        set { d.set(newValue, forKey: "soundPack") }
     }
-    /// Sound pack used by the Custom profile (file prefix, see SoundPack.all).
-    var customPack: String {
-        get { SoundPack.named(d.string(forKey: "customPack") ?? "Cream").file }
-        set { d.set(newValue, forKey: "customPack") }
+    static let themeNames = ["Auto", "Light", "Dark", "Glass"]
+
+    /// Puts every setting back to its default. My words and the Max unlock
+    /// are kept: they are the user's data and purchase, not preferences.
+    func resetAll() {
+        for key in ["longPressMs", "suggestionsOn", "autocorrectOn", "tapHaptic", "longHaptic",
+                    "theme", "soundPack", "pasteCodesOn", "leftKey", "rightKey", "rowKey",
+                    "leftKeyShown", "rightKeyShown", "rowKeyShown", "symbolMap", "historyOn",
+                    "heightScale", "showHints", "oneHanded"] {
+            d.removeObject(forKey: key)
+        }
     }
     /// Offer a "Paste code" button when a copied number is on the clipboard.
     var pasteCodesOn: Bool {
@@ -94,7 +102,7 @@ final class KBSettings {
         get { bool("rightKeyShown", true) }
         set { d.set(newValue, forKey: "rightKeyShown") }
     }
-    /// Third shortcut key: at the end of the A–L row.
+    /// Third Action Key: at the right end of the suggestion bar.
     var rowKey: String {
         get { nonEmpty(d.string(forKey: "rowKey")) ?? Self.defaultRowKey }
         set { d.set(newValue, forKey: "rowKey") }
@@ -115,8 +123,8 @@ final class KBSettings {
     }
 
     /// The three shortcut keys by number: 0 left of space, 1 right of space,
-    /// 2 end of the A–L row.
-    static let shortcutNames = ["Left of space", "Right of space", "End of A–L row"]
+    /// 2 right end of the suggestion bar.
+    static let shortcutNames = ["Left of space", "Right of space", "Suggestion bar"]
     static let shortcutDefaults = [KBSettings.defaultLeftKey, KBSettings.defaultRightKey, KBSettings.defaultRowKey]
 
     func shortcutKey(_ index: Int) -> String {
@@ -151,6 +159,27 @@ final class KBSettings {
     private func nonEmpty(_ value: String?) -> String? {
         guard let value = value, !value.isEmpty else { return nil }
         return value
+    }
+
+    /// Small long-press symbol shown in the corner of each letter key.
+    var showHints: Bool {
+        get { bool("showHints", true) }
+        set { d.set(newValue, forKey: "showHints") }
+    }
+    /// One-handed keyboard: 0 off, 1 pushed to the left, 2 pushed to the right.
+    var oneHanded: Int {
+        get { min(max(int("oneHanded", 0), 0), 2) }
+        set { d.set(newValue, forKey: "oneHanded") }
+    }
+    /// Most recently used emoji first.
+    var recentEmoji: [String] {
+        get { d.stringArray(forKey: "recentEmoji") ?? [] }
+        set { d.set(newValue, forKey: "recentEmoji") }
+    }
+    func addRecentEmoji(_ emoji: String) {
+        var list = recentEmoji.filter { $0 != emoji }
+        list.insert(emoji, at: 0)
+        recentEmoji = Array(list.prefix(32))
     }
 
     var customWords: [String] {
@@ -188,6 +217,17 @@ final class KBSettings {
     }
     var effectiveHeightScale: CGFloat {
         maxUnlocked ? CGFloat(heightScale) : 1
+    }
+    /// The Tac Tile sound and vibration in use. Without Max only the four
+    /// presets are available, so any other mix falls back to the Brown preset.
+    var effectiveFeel: (pack: String, haptic: Int) {
+        let pack = soundPack
+        let haptic = tapHaptic
+        if maxUnlocked || TacPreset.all.contains(where: { $0.pack == pack && $0.haptic == haptic }) {
+            return (pack, haptic)
+        }
+        let fallback = TacPreset.all[1]
+        return (fallback.pack, fallback.haptic)
     }
     var effectiveHistory: Bool {
         maxUnlocked && historyOn
