@@ -1,6 +1,6 @@
 //
 //  KeyboardViewController.swift
-//  Keyboard Pro for iPhone  (version 14)
+//  Keyboard Pro for iPhone  (version 16)
 //
 //  - Number row always on top (a little shorter than the letter rows)
 //  - Long-press a letter: slide along a row of its symbol and accents
@@ -11,6 +11,10 @@
 //    the suggestion bar (Paste)
 //  - Return key shows Go / Search / Send … to match the app
 //  - One-handed mode (keys pushed left or right)
+//  - Your iPhone text replacements, smart punctuation, emoji suggestions
+//  - Web and email fields: / or @ beside space, hold . for .com .net …
+//  - The gear opens the Keyboard Pro app, where all settings live. Settings
+//    are read from storage shared with the app each time the keyboard opens.
 //  - Hold shift to turn on caps lock (or double-tap it)
 //  - Suggestion bar: word completion, auto-correct, add words, paste copied code
 //  - Settings (gear button): theme, switch sound + vibration, Max options
@@ -91,6 +95,10 @@ final class KeyButton: UIControl {
     /// Whether letter keys show their long-press symbol in the corner.
     static var showHints = true
 
+    /// Long-press choices that replace the letter's symbol and accents
+    /// (the .com .net … endings on the full stop in web fields).
+    var choices: [String] = []
+
     /// Blue key with white text (the return key for Go, Search, Send …).
     var isAccent = false { didSet { updateColor() } }
 
@@ -149,7 +157,8 @@ final class KeyButton: UIControl {
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -2),
             iconView.centerXAnchor.constraint(equalTo: centerXAnchor),
             iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            iconView.heightAnchor.constraint(equalToConstant: 20),
+            // The Paste icon is drawn 25% smaller than other key icons.
+            iconView.heightAnchor.constraint(equalToConstant: kind == .paste ? 15 : 20),
             hintLabel.topAnchor.constraint(equalTo: topAnchor, constant: 1),
             hintLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
         ])
@@ -295,7 +304,10 @@ final class LongPressPicker: UIView {
     private var labels: [UILabel] = []
     private(set) var options: [String] = []
     private(set) var selected = 0
-    let cellWidth: CGFloat = 34
+    /// Width of each choice: at least 34 pt, wider for ".com" and the like.
+    private(set) var widths: [CGFloat] = []
+    var totalWidth: CGFloat { widths.reduce(0, +) + 8 }
+    var firstWidth: CGFloat { widths.first ?? 34 }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -307,7 +319,7 @@ final class LongPressPicker: UIView {
         layer.shadowRadius = 6
         layer.shadowOffset = CGSize(width: 0, height: 2)
         stack.axis = .horizontal
-        stack.distribution = .fillEqually
+        stack.distribution = .fill
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
         NSLayoutConstraint.activate([
@@ -325,14 +337,18 @@ final class LongPressPicker: UIView {
     func show(_ choices: [String]) {
         options = choices
         labels.forEach { $0.removeFromSuperview() }
+        widths = []
         labels = choices.map { text -> UILabel in
             let l = UILabel()
             l.text = text
-            l.font = .systemFont(ofSize: 22)
+            l.font = .systemFont(ofSize: text.count > 1 ? 17 : 22)
             l.textAlignment = .center
             l.layer.cornerRadius = 7
             l.clipsToBounds = true
+            let w = max(34, ceil(l.intrinsicContentSize.width) + 14)
+            widths.append(w)
             stack.addArrangedSubview(l)
+            l.widthAnchor.constraint(equalToConstant: w).isActive = true
             return l
         }
         select(0)
@@ -341,8 +357,15 @@ final class LongPressPicker: UIView {
     /// Picks the choice under a point given in this view's coordinates.
     func select(atX x: CGFloat) {
         guard !options.isEmpty else { return }
-        let index = Int(floor((x - 4) / cellWidth))
-        select(min(max(index, 0), options.count - 1))
+        var edge: CGFloat = 4
+        for (i, w) in widths.enumerated() {
+            if x < edge + w {
+                select(i)
+                return
+            }
+            edge += w
+        }
+        select(options.count - 1)
     }
 
     private func select(_ index: Int) {
@@ -534,6 +557,12 @@ final class KeyboardViewController: UIInputViewController {
     // Return key that matches the app (Go, Search, Send …)
     private weak var returnKey: KeyButton?
 
+    // Text replacements from iPhone Settings, and contact names (known words).
+    private var shortcuts: [String: String] = [:]
+    private var lexiconNames: [String] = []
+    /// 0 normal field, 1 web address / web search, 2 email: the keys differ.
+    private var builtFieldKind = -1
+
     // After typing a symbol, the next space goes back to letters.
     private var typedSymbol = false
 
@@ -614,6 +643,7 @@ final class KeyboardViewController: UIInputViewController {
         picker.isHidden = true
         view.addSubview(picker)
         setUpSearchBar()
+        loadLexicon()
 
         buildKeyboard()
     }
@@ -625,13 +655,17 @@ final class KeyboardViewController: UIInputViewController {
         let numeric = (type == .decimalPad || type == .numbersAndPunctuation)
         page = numeric ? .symbols : .letters
         pickingKeySide = nil
-        let wasSearching = (emojiQuery != nil)
         emojiQuery = nil
         typedSymbol = false
         manualShift = false
-        if wasSearching || builtPage != page || builtWithGlobe != needsInputModeSwitchKey {
-            buildKeyboard()
-        }
+        loadLexicon()                           // picks up new text replacements
+
+        // Settings may have changed in the Keyboard Pro app: apply them all.
+        if hasFullAccess { settings.keyboardFullAccess = true }   // tells the app
+        applyTheme()
+        feedback.reload(settings)
+        applyMetrics(landscape: isLandscape ?? false)
+        buildKeyboard()
         updateAutoShift()
         refreshSuggestions()
         refreshReturnKey()
@@ -659,6 +693,10 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     override func textDidChange(_ textInput: UITextInput?) {
+        // Moving to a web or email field changes the keys beside the space bar.
+        if fieldKind != builtFieldKind, page == .letters || page == .symbols || page == .more {
+            buildKeyboard()
+        }
         updateAutoShift()
         refreshSuggestions()
         refreshReturnKey()
@@ -744,13 +782,35 @@ final class KeyboardViewController: UIInputViewController {
         let small: CGFloat = globe ? 0.09 : 0.1
 
         // Action Keys beside the space bar. Typed as-is, never shifted.
-        func shortcutKey(_ text: String) -> KeyButton {
-            let key = text == KBSettings.pasteAction
-                ? KeyButton(kind: .paste, icon: "doc.on.clipboard", function: true)
-                : KeyButton(kind: .char, title: text, output: text, function: true)
+        func shortcutKey(_ text: String, choices: [String] = []) -> KeyButton {
+            let key: KeyButton
+            if text == KBSettings.pasteAction {
+                key = KeyButton(kind: .paste, icon: "doc.on.clipboard", function: true)
+            } else {
+                key = KeyButton(kind: .char, title: text, output: text,
+                                alternate: choices.first, function: true)
+                key.choices = choices
+            }
             register(key)
             width(key, small)
             return key
+        }
+
+        // Web and email fields: / or @ on the left, and a full stop on the
+        // right that offers .com .net … when held. Like Apple's keyboard.
+        let kind = fieldKind
+        builtFieldKind = kind
+        var leftText = settings.leftKey
+        var rightText = settings.rightKey
+        var leftShown = settings.leftKeyShown
+        var rightShown = settings.rightKeyShown
+        var rightChoices: [String] = []
+        if kind != 0 {
+            leftText = kind == 1 ? "/" : "@"
+            rightText = "."
+            leftShown = true
+            rightShown = true
+            rightChoices = KBSettings.webDomains
         }
 
         // Number row, then rows 1 and 2. The A–L row has 9 keys, so it sits
@@ -803,13 +863,13 @@ final class KeyboardViewController: UIInputViewController {
             bottom.append(globeKey)
         }
 
-        if settings.leftKeyShown { bottom.append(shortcutKey(settings.leftKey)) }
+        if leftShown { bottom.append(shortcutKey(leftText)) }
 
         let space = KeyButton(kind: .space, title: "space")
         register(space)
         bottom.append(space)
 
-        if settings.rightKeyShown { bottom.append(shortcutKey(settings.rightKey)) }
+        if rightShown { bottom.append(shortcutKey(rightText, choices: rightChoices)) }
 
         let ret = KeyButton(kind: .ret, icon: "return", function: true)
         register(ret)
@@ -1330,7 +1390,7 @@ final class KeyboardViewController: UIInputViewController {
             return
         }
         if page == .symbols || page == .more { typedSymbol = true }
-        proxy.insertText(text)
+        proxy.insertText(smartPunctuation(text))
         lastCorrection = nil
         manualShift = false
         if shift == .on {
@@ -1352,6 +1412,19 @@ final class KeyboardViewController: UIInputViewController {
         let fieldType = proxy.keyboardType ?? .default
         let plainText = !(fieldType == .URL || fieldType == .emailAddress || fieldType == .webSearch)
 
+        // Text replacement: "omw" + space becomes "On my way! ".
+        let token = currentToken()
+        if plainText, !token.isEmpty, let phrase = shortcuts[token.lowercased()] {
+            for _ in 0..<token.count { proxy.deleteBackward() }
+            proxy.insertText(phrase + " ")
+            lastSpaceTap = .distantPast
+            lastCorrection = nil
+            manualShift = false
+            updateAutoShift()
+            refreshSuggestions()
+            return
+        }
+
         // Auto-correct the word that was just finished, then learn it.
         let context = wordContext()
         var finished = context.word
@@ -1359,7 +1432,7 @@ final class KeyboardViewController: UIInputViewController {
         if settings.autocorrectOn, plainText,
            (proxy.autocorrectionType ?? .default) != .no,
            !rejectedCorrections.contains(context.word.lowercased()),
-           let fix = engine.correction(for: context.word, custom: settings.customWords) {
+           let fix = engine.correction(for: context.word, custom: knownWords) {
             for _ in 0..<context.word.count { proxy.deleteBackward() }
             proxy.insertText(fix)
             lastCorrection = (context.word, fix)
@@ -1564,7 +1637,12 @@ final class KeyboardViewController: UIInputViewController {
 
         if settings.suggestionsOn {
             let context = wordContext()
-            let custom = settings.customWords
+            let custom = knownWords
+            // The user's text replacement for what was just typed goes first.
+            let token = currentToken()
+            if !token.isEmpty, let phrase = shortcuts[token.lowercased()] {
+                list.append(Suggestion(title: phrase, text: phrase, isAdd: false, isShortcut: true))
+            }
             // Unknown word: offer to add it to the dictionary.
             if context.word.count >= 2, context.word.allSatisfy({ $0.isLetter }),
                !engine.isKnown(context.word, custom: custom) {
@@ -1574,6 +1652,11 @@ final class KeyboardViewController: UIInputViewController {
                                            custom: custom, useHistory: settings.effectiveHistory)
             for word in words where list.count < 3 {
                 list.append(Suggestion(title: word, text: word, isAdd: false))
+            }
+            // An emoji for the word, e.g. "pizza" -> 🍕, in the last place.
+            if settings.emojiSuggestionsOn, let emoji = EmojiNames.emoji(forWord: context.word) {
+                if list.count >= 3 { list.removeLast() }
+                list.append(Suggestion(title: emoji, text: emoji, isAdd: false, isEmoji: true))
             }
         }
 
@@ -1600,6 +1683,22 @@ final class KeyboardViewController: UIInputViewController {
             pasteCode()
             return
         }
+        if choice.isShortcut {
+            let token = currentToken()
+            for _ in 0..<token.count { proxy.deleteBackward() }
+            proxy.insertText(choice.text + " ")
+            afterSuggestion()
+            return
+        }
+        if choice.isEmoji {
+            // Keeps the word and adds the emoji after it: "pizza 🍕 ".
+            let before = proxy.documentContextBeforeInput ?? ""
+            let gap = (before.last.map { !$0.isWhitespace } ?? false) ? " " : ""
+            proxy.insertText(gap + choice.text + " ")
+            settings.addRecentEmoji(choice.text)
+            afterSuggestion()
+            return
+        }
         if choice.isAdd {
             var words = settings.customWords
             if !words.contains(where: { $0.lowercased() == choice.text.lowercased() }) {
@@ -1614,7 +1713,11 @@ final class KeyboardViewController: UIInputViewController {
         for _ in 0..<context.word.count { proxy.deleteBackward() }
         proxy.insertText(choice.text + " ")
         if settings.effectiveHistory { engine.learn(choice.text, previous: context.previous) }
+        afterSuggestion()
+    }
 
+    /// Shared tidy-up after a suggestion is used.
+    private func afterSuggestion() {
         lastCorrection = nil
         manualShift = false
         if shift == .on {
@@ -1625,6 +1728,64 @@ final class KeyboardViewController: UIInputViewController {
         refreshSuggestions()
     }
 
+    // MARK: Text replacements, smart punctuation, field type
+
+    /// Loads the user's text replacements and contact names from iOS.
+    private func loadLexicon() {
+        requestSupplementaryLexicon { [weak self] lexicon in
+            var map: [String: String] = [:]
+            var names: [String] = []
+            for entry in lexicon.entries {
+                if entry.userInput.caseInsensitiveCompare(entry.documentText) == .orderedSame {
+                    names.append(entry.documentText)     // a contact name: just a known word
+                } else {
+                    map[entry.userInput.lowercased()] = entry.documentText
+                }
+            }
+            DispatchQueue.main.async {
+                self?.shortcuts = map
+                self?.lexiconNames = names
+            }
+        }
+    }
+
+    /// Words never auto-corrected: My words plus contact names.
+    private var knownWords: [String] { settings.customWords + lexiconNames }
+
+    /// Everything typed since the last space or new line ("omw", "@@" …).
+    private func currentToken() -> String {
+        let before = proxy.documentContextBeforeInput ?? ""
+        return String(before.reversed().prefix { !$0.isWhitespace }.reversed())
+    }
+
+    /// 0 normal, 1 web address or web search, 2 email address.
+    private var fieldKind: Int {
+        switch proxy.keyboardType ?? .default {
+        case .URL, .webSearch: return 1
+        case .emailAddress:    return 2
+        default:               return 0
+        }
+    }
+
+    /// Curly quotes and apostrophes; a second hyphen becomes a dash.
+    /// Follows the app: fields that turn smart quotes or dashes off are left alone.
+    private func smartPunctuation(_ text: String) -> String {
+        guard settings.smartPunctuationOn, fieldKind == 0 else { return text }
+        let before = proxy.documentContextBeforeInput ?? ""
+        let previous = before.last
+        let opening = previous.map { $0.isWhitespace || "([{“‘<".contains($0) } ?? true
+        let quotesAllowed = (proxy.smartQuotesType ?? .default) != .no
+        let dashesAllowed = (proxy.smartDashesType ?? .default) != .no
+
+        if text == "'", quotesAllowed { return opening ? "‘" : "’" }
+        if text == "\"", quotesAllowed { return opening ? "“" : "”" }
+        if text == "-", dashesAllowed, previous == "-" {
+            proxy.deleteBackward()
+            return "—"
+        }
+        return text
+    }
+
     // MARK: Action Key in the suggestion bar
 
     private func refreshActionSlot() {
@@ -1632,7 +1793,10 @@ final class KeyboardViewController: UIInputViewController {
         actionSlot.isHidden = !settings.rowKeyShown
         UIView.performWithoutAnimation {
             if value == KBSettings.pasteAction {
-                actionSlot.setImage(UIImage(systemName: "doc.on.clipboard"), for: .normal)
+                // 13 pt: about 25% smaller than the default 17 pt symbol.
+                actionSlot.setImage(UIImage(systemName: "doc.on.clipboard",
+                                            withConfiguration: UIImage.SymbolConfiguration(pointSize: 13)),
+                                    for: .normal)
                 actionSlot.setTitle(nil, for: .normal)
                 actionSlot.accessibilityLabel = "Paste"
             } else {
@@ -1697,7 +1861,9 @@ final class KeyboardViewController: UIInputViewController {
 
     /// The symbol first, then accented letters (capitals when shift is on).
     private func longPressChoices(for key: KeyButton) -> [String] {
-        guard key.kind == .char, page == .letters else { return [] }
+        guard key.kind == .char else { return [] }
+        if !key.choices.isEmpty { return key.choices }
+        guard page == .letters else { return [] }
         var choices: [String] = []
         if let alt = key.alternate { choices.append(alt) }
         let capital = key.output != key.base
@@ -1712,9 +1878,9 @@ final class KeyboardViewController: UIInputViewController {
         hidePopup()
         picker.show(choices)
         let f = key.convert(key.bounds, to: view)
-        let w = CGFloat(choices.count) * picker.cellWidth + 8
+        let w = picker.totalWidth
         let h: CGFloat = 46
-        var x = f.midX - picker.cellWidth / 2 - 4      // first choice sits over the key
+        var x = f.midX - picker.firstWidth / 2 - 4      // first choice sits over the key
         x = min(x, view.bounds.width - w - 2)
         x = max(2, x)
         let y = max(0, f.minY - h - 4)
@@ -1983,9 +2149,43 @@ final class KeyboardViewController: UIInputViewController {
         }
     }
 
+    /// The gear: opens the Keyboard Pro app's settings. Falls back to the
+    /// settings inside the keyboard when the app can't be opened, or when this
+    /// install has no shared storage (changes in the app wouldn't reach here).
     private func openSettings() {
+        guard KBSettings.sharedAvailable else {
+            showKeyboardSettings()
+            return
+        }
+        openContainingApp { [weak self] opened in
+            DispatchQueue.main.async {
+                if !opened { self?.showKeyboardSettings() }
+            }
+        }
+    }
+
+    private func showKeyboardSettings() {
         page = .settings
         buildKeyboard()
+    }
+
+    /// iOS has no public way for a keyboard to open its app, so this finds the
+    /// running UIApplication through the responder chain and asks it to open
+    /// keyboardpro://settings. Reports false if that isn't possible.
+    private func openContainingApp(_ done: @escaping (Bool) -> Void) {
+        guard let url = URL(string: "keyboardpro://settings") else {
+            done(false)
+            return
+        }
+        var responder: UIResponder? = self
+        while let current = responder {
+            if let application = current as? UIApplication {
+                application.open(url, options: [:], completionHandler: done)
+                return
+            }
+            responder = current.next
+        }
+        done(false)
     }
 
     private func closeSettings() {

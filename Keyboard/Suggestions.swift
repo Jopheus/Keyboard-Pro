@@ -11,6 +11,8 @@ struct Suggestion {
     let text: String      // the word itself
     let isAdd: Bool       // true = "add this word to my dictionary"
     var isPaste = false   // true = "paste the code I copied"
+    var isEmoji = false   // true = an emoji for the word just typed
+    var isShortcut = false // true = the user's text replacement ("omw" -> "On my way!")
 }
 
 final class SuggestionEngine {
@@ -26,7 +28,9 @@ final class SuggestionEngine {
 
     private let fileURL: URL? = {
         let fm = FileManager.default
-        guard let dir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+        // Shared with the app (so "Clear" in the app works), else the keyboard's own folder.
+        let shared = fm.containerURL(forSecurityApplicationGroupIdentifier: KBSettings.appGroup)
+        guard let dir = shared ?? fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
             return nil
         }
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)

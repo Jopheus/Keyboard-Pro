@@ -7,7 +7,26 @@ import UIKit
 
 final class KBSettings {
     static let shared = KBSettings()
-    private let d = UserDefaults.standard
+
+    /// Storage shared by the Keyboard Pro app and the keyboard (App Group).
+    /// The app writes settings; the keyboard can always read them, and can
+    /// write (My words, recently used emoji) only when Full Access is on.
+    static let appGroup = "group.com.example.keyboardpro"
+
+    /// False when this install has no App Group (for example if the signing
+    /// tool dropped it). Then each side keeps its own settings, and the
+    /// keyboard shows its settings itself instead of opening the app.
+    static let sharedAvailable =
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup) != nil
+
+    private let d: UserDefaults = KBSettings.sharedAvailable
+        ? (UserDefaults(suiteName: KBSettings.appGroup) ?? .standard) : .standard
+
+    /// Last Full Access state the keyboard saw (the app can't check it itself).
+    var keyboardFullAccess: Bool? {
+        get { d.object(forKey: "keyboardFullAccess") as? Bool }
+        set { d.set(newValue, forKey: "keyboardFullAccess") }
+    }
 
     /// Default long-press symbol for each letter.
     static let defaultSymbols: [String: String] = [
@@ -76,7 +95,8 @@ final class KBSettings {
         for key in ["longPressMs", "suggestionsOn", "autocorrectOn", "tapHaptic", "longHaptic",
                     "theme", "soundPack", "pasteCodesOn", "leftKey", "rightKey", "rowKey",
                     "leftKeyShown", "rightKeyShown", "rowKeyShown", "symbolMap", "historyOn",
-                    "heightScale", "showHints", "oneHanded"] {
+                    "heightScale", "showHints", "oneHanded", "smartPunctuationOn",
+                    "emojiSuggestionsOn"] {
             d.removeObject(forKey: key)
         }
     }
@@ -160,6 +180,19 @@ final class KBSettings {
         guard let value = value, !value.isEmpty else { return nil }
         return value
     }
+
+    /// Curly quotes and apostrophes, and two hyphens become a dash.
+    var smartPunctuationOn: Bool {
+        get { bool("smartPunctuationOn", true) }
+        set { d.set(newValue, forKey: "smartPunctuationOn") }
+    }
+    /// Offer an emoji in the suggestion bar for the word being typed.
+    var emojiSuggestionsOn: Bool {
+        get { bool("emojiSuggestionsOn", true) }
+        set { d.set(newValue, forKey: "emojiSuggestionsOn") }
+    }
+    /// Endings offered when holding the full stop in web and email fields.
+    static let webDomains = [".com", ".net", ".org", ".edu", ".my", ".com.my", ".co"]
 
     /// Small long-press symbol shown in the corner of each letter key.
     var showHints: Bool {

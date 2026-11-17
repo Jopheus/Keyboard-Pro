@@ -38,6 +38,37 @@ enum EmojiNames {
         return results
     }
 
+    /// The emoji for a typed word ("pizza" -> 🍕), for the suggestion bar.
+    /// Emoji whose name starts with the word win over keyword matches.
+    static func emoji(forWord word: String) -> String? {
+        let w = word.lowercased()
+        guard w.count >= 3, !skipWords.contains(w) else { return nil }
+        return wordIndex[w]
+    }
+
+    /// Words too general to suggest an emoji for.
+    private static let skipWords: Set<String> = [
+        "the", "and", "with", "without", "for", "you", "not", "one", "two", "face", "person",
+        "people", "man", "woman", "men", "women", "button", "symbol", "sign", "mark", "flag",
+        "small", "large", "big", "light", "dark", "medium", "skin", "tone", "hand", "hands",
+        "open", "closed", "eye", "eyes", "mouth", "old", "new", "red", "blue", "green", "black",
+        "white", "yellow", "orange", "purple", "brown", "this", "that", "are", "was", "has",
+    ]
+
+    /// word -> emoji, built the first time it is needed.
+    private static let wordIndex: [String: String] = {
+        var first: [String: String] = [:]
+        var any: [String: String] = [:]
+        for line in raw.split(separator: "\n") {
+            guard let tab = line.firstIndex(of: "\t") else { continue }
+            let emoji = String(line[..<tab])
+            let words = line[line.index(after: tab)...].split(separator: " ").map(String.init)
+            if let w = words.first, first[w] == nil { first[w] = emoji }
+            for w in words where any[w] == nil { any[w] = emoji }
+        }
+        return any.merging(first) { _, firstMatch in firstMatch }
+    }()
+
     /// emoji -> "name and keywords", built the first time search is used.
     private static let table: [String: String] = {
         var table: [String: String] = [:]

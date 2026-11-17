@@ -26,6 +26,10 @@ final class SettingsPanel: UIView {
     var onPickEmoji: ((Int) -> Void)?
     /// A sample key was pressed: play the Tac Tile sound and vibration.
     var onPreviewKey: ((KeySound) -> Void)?
+    /// Opens the iPhone's Settings app (only set inside the Keyboard Pro app).
+    var onOpenSystemSettings: (() -> Void)?
+    /// True when shown full screen in the Keyboard Pro app, not in the keyboard.
+    var isInApp = false
 
     /// Where the panel opens.
     enum Start { case main, spaceKeys }
@@ -217,6 +221,7 @@ final class SettingsPanel: UIView {
             actionButton.setTitle(button, for: .normal)
             actionButton.layoutIfNeeded()
         }
+        actionButton.isHidden = button.isEmpty
         action = handler
     }
 
@@ -281,7 +286,12 @@ final class SettingsPanel: UIView {
     // MARK: Main menu
 
     private func renderMain() {
-        setHeader("Keyboard settings", button: "Done") { [weak self] in self?.onDone?() }
+        if isInApp {
+            setHeader("Keyboard Pro", button: "") {}
+            renderSetUp()
+        } else {
+            setHeader("Keyboard settings", button: "Done") { [weak self] in self?.onDone?() }
+        }
 
         if !fullAccess { add(accessBanner()) }
 
@@ -359,9 +369,17 @@ final class SettingsPanel: UIView {
         add(row("Auto-correct spelling", toggle(settings.autocorrectOn) { [weak self] in
             self?.settings.autocorrectOn = $0
         }))
+        add(row("Emoji suggestions", toggle(settings.emojiSuggestionsOn) { [weak self] in
+            self?.settings.emojiSuggestionsOn = $0
+        }))
+        add(row("Smart punctuation", toggle(settings.smartPunctuationOn) { [weak self] in
+            self?.settings.smartPunctuationOn = $0
+        }))
         add(row("Paste button for copied codes", toggle(settings.pasteCodesOn) { [weak self] in
             self?.settings.pasteCodesOn = $0
         }))
+        add(note("Your text replacements (Settings → General → Keyboard → Text Replacement) "
+                 + "work here too: type the shortcut and press space."))
         add(row("My words (\(settings.customWords.count))",
                 button("Manage") { [weak self] in self?.show(.words) }))
 
@@ -528,7 +546,12 @@ final class SettingsPanel: UIView {
         add(button("Paste button (pastes copied text)") {
             choose(KBSettings.pasteAction)
         })
-        add(button("Choose an emoji…") { [weak self] in self?.onPickEmoji?(side) })
+        if onPickEmoji != nil {
+            add(button("Choose an emoji…") { [weak self] in self?.onPickEmoji?(side) })
+        } else {
+            // In the app the iPhone's own keyboard is up, so anything can be typed.
+            add(typedValueRow(choose))
+        }
 
         add(header("Symbols"))
         addTiles([",", "."] + KBSettings.symbolChoices.filter { $0 != "," && $0 != "." }, choose)
@@ -536,6 +559,95 @@ final class SettingsPanel: UIView {
         addTiles((0...9).map { String($0) }, choose)
         add(header("Letters"))
         addTiles("abcdefghijklmnopqrstuvwxyz".map { String($0) }, choose)
+    }
+
+    // MARK: Set-up (Keyboard Pro app only)
+
+    private func renderSetUp() {
+        if !KBSettings.sharedAvailable {
+            add(warningBox("Settings can't reach the keyboard",
+                           "This install has no shared storage, so changes here won't reach the "
+                           + "keyboard. Use the gear on the keyboard to change its settings."))
+        }
+
+        add(header("Set up"))
+        let steps = [
+            "1. Open Settings → General → Keyboard → Keyboards",
+            "2. Tap Add New Keyboard… and choose Keyboard Pro",
+            "3. Tap Keyboard Pro and turn on Allow Full Access for sound, vibration, Paste "
+                + "and saving your words. The keyboard never uses the internet.",
+            "4. In any app, hold the globe key and pick Keyboard Pro",
+        ]
+        steps.forEach { add(label($0)) }
+        if onOpenSystemSettings != nil {
+            add(button("Open iPhone Settings") { [weak self] in self?.onOpenSystemSettings?() })
+        }
+
+        add(header("Try it"))
+        let field = UITextField()
+        field.placeholder = "Type here to try the keyboard"
+        field.borderStyle = .roundedRect
+        field.font = Self.font(16)
+        field.adjustsFontForContentSizeCategory = true
+        field.returnKeyType = .done
+        field.addAction(UIAction { [weak field] _ in field?.resignFirstResponder() },
+                        for: .editingDidEndOnExit)
+        soft(field.heightAnchor.constraint(equalToConstant: 44)).isActive = true
+        add(field)
+        add(header("Settings"))
+    }
+
+    /// A text field for typing an Action Key value (letters, symbols, emoji …).
+    private func typedValueRow(_ choose: @escaping (String) -> Void) -> UIView {
+        let field = UITextField()
+        field.placeholder = "Or type anything, even an emoji"
+        field.borderStyle = .roundedRect
+        field.font = Self.font(16)
+        field.adjustsFontForContentSizeCategory = true
+        field.autocorrectionType = .no
+        field.autocapitalizationType = .none
+        field.returnKeyType = .done
+
+        let use = button("Use") { [weak field] in
+            guard let text = field?.text?.trimmingCharacters(in: .whitespaces),
+                  !text.isEmpty else { return }
+            choose(text)
+        }
+        field.addAction(UIAction { [weak field] _ in
+            guard let text = field?.text?.trimmingCharacters(in: .whitespaces),
+                  !text.isEmpty else { return }
+            choose(text)
+        }, for: .editingDidEndOnExit)
+
+        let row = UIStackView(arrangedSubviews: [field, use])
+        row.axis = .horizontal
+        row.spacing = 8
+        row.alignment = .center
+        use.setContentHuggingPriority(.required, for: .horizontal)
+        soft(field.heightAnchor.constraint(equalToConstant: 44)).isActive = true
+        return row
+    }
+
+    private func warningBox(_ title: String, _ text: String) -> UIView {
+        let heading = label(title)
+        heading.font = Self.font(15, .semibold)
+        let body = note(text)
+        body.textColor = .label
+        let content = UIStackView(arrangedSubviews: [heading, body])
+        content.axis = .vertical
+        content.spacing = 6
+        content.translatesAutoresizingMaskIntoConstraints = false
+        let box = UIView()
+        box.backgroundColor = UIColor.systemRed.withAlphaComponent(0.15)
+        box.layer.cornerRadius = 10
+        box.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 12),
+            content.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -12),
+            content.topAnchor.constraint(equalTo: box.topAnchor, constant: 10),
+            content.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -10),
+        ])
+        return box
     }
 
     // MARK: Building blocks
