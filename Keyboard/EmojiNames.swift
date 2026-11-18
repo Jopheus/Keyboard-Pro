@@ -10,23 +10,16 @@ import Foundation
 enum EmojiNames {
 
     /// Emoji whose name or keywords start with every word typed, best first.
-    /// WeChat codes are matched by their text, e.g. "face" finds [Facepalm].
     static func search(_ query: String, in groups: [EmojiGroup], limit: Int = 60) -> [String] {
         let words = query.lowercased().split(whereSeparator: { $0 == " " }).map(String.init)
         guard !words.isEmpty else { return [] }
 
         var results: [String] = []
         var seen = Set<String>()
-        for group in groups {
+        for group in groups where group.kind == .emoji {
             for item in group.items where !seen.contains(item) {
-                let names: [Substring]
-                if group.isText {
-                    names = item.lowercased().split(whereSeparator: { !$0.isLetter })
-                } else if let text = table[item] {
-                    names = text.split(separator: " ")
-                } else {
-                    continue
-                }
+                guard let text = table[item] else { continue }
+                let names = text.split(separator: " ")
                 let matches = words.allSatisfy { word in names.contains { $0.hasPrefix(word) } }
                 if matches {
                     seen.insert(item)

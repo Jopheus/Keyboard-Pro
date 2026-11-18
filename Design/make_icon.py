@@ -1,10 +1,10 @@
 import sys
 V = {
  "light": dict(bg1="#FFFFFF", bg2="#DCDCE2", skirt1="#4A4A4E", skirt2="#1C1C1E",
-               top1="#5C5C61", top2="#2C2C2E", bar="#FFFFFF", ring1="#0A84FF", ring2="#64D2FF",
+               top1="#5C5C61", top2="#2C2C2E", bar="#FFFFFF", ring1="#3A3A3C", ring2="#636366",
                ringop=(0.55,0.28), shadow=0.35, hl=0.22),
  "dark":  dict(bg1="#2C2C2E", bg2="#000000", skirt1="#6E6E73", skirt2="#2C2C2E",
-               top1="#8E8E93", top2="#48484A", bar="#FFFFFF", ring1="#0A84FF", ring2="#64D2FF",
+               top1="#8E8E93", top2="#48484A", bar="#FFFFFF", ring1="#AEAEB2", ring2="#D1D1D6",
                ringop=(0.75,0.38), shadow=0.6, hl=0.25),
  "tinted":dict(bg1="#000000", bg2="#000000", skirt1="#9A9A9A", skirt2="#5A5A5A",
                top1="#E6E6E6", top2="#ADADAD", bar="#000000", ring1="#FFFFFF", ring2="#FFFFFF",
@@ -24,17 +24,17 @@ def svg(v):
 </defs>
 <rect width="1024" height="1024" fill="url(#bg)"/>
 <!-- haptic pulse rings -->
-<rect x="150" y="150" width="724" height="724" rx="200" fill="none" stroke="url(#ring)" stroke-width="14" opacity="{o2}"/>
-<rect x="208" y="208" width="608" height="608" rx="160" fill="none" stroke="url(#ring)" stroke-width="18" opacity="{o1}"/>
+<rect x="104" y="104" width="816" height="816" rx="230" fill="none" stroke="url(#ring)" stroke-width="14" opacity="{o2}"/>
+<rect x="160" y="160" width="704" height="704" rx="190" fill="none" stroke="url(#ring)" stroke-width="18" opacity="{o1}"/>
 <!-- shadow -->
-<rect x="300" y="360" width="424" height="400" rx="100" fill="#000" opacity="{c['shadow']}" filter="url(#sh)"/>
+<rect x="250" y="320" width="524" height="490" rx="120" fill="#000" opacity="{c['shadow']}" filter="url(#sh)"/>
 <!-- keycap skirt -->
-<rect x="282" y="282" width="460" height="460" rx="104" fill="url(#skirt)"/>
+<rect x="232" y="232" width="560" height="560" rx="126" fill="url(#skirt)"/>
 <!-- keycap top face -->
-<rect x="318" y="298" width="388" height="376" rx="80" fill="url(#top)"/>
-<rect x="318" y="298" width="388" height="376" rx="80" fill="url(#hl)"/>
+<rect x="276" y="251" width="472" height="458" rx="97" fill="url(#top)"/>
+<rect x="276" y="251" width="472" height="458" rx="97" fill="url(#hl)"/>
 <!-- return arrow -->
-<path d="M588 396 V516 H442 M486 472 L442 516 L486 560" fill="none" stroke="{c['bar']}" stroke-width="30" stroke-linecap="round" stroke-linejoin="round" opacity="0.95"/>
+<path transform="translate(512 480) scale(1.22) translate(-515 -478)" d="M588 396 V516 H442 M486 472 L442 516 L486 560" fill="none" stroke="{c['bar']}" stroke-width="30" stroke-linecap="round" stroke-linejoin="round" opacity="0.95"/>
 </svg>'''
 for v in V:
     open(f"{v}.svg","w").write(svg(v))

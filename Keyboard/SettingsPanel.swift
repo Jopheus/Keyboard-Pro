@@ -11,6 +11,8 @@
 //    greyed out until Max is unlocked.
 //  - Clear / Reset buttons need a second tap to confirm.
 //  - Text follows the iPhone's text-size setting; rows are at least 44 pt.
+//  - Rows are grouped in rounded cards with thin dividers, like the iPhone's
+//    own Settings app: title on the left, value or switch on the right.
 //
 
 import UIKit
@@ -26,10 +28,6 @@ final class SettingsPanel: UIView {
     var onPickEmoji: ((Int) -> Void)?
     /// A sample key was pressed: play the Tac Tile sound and vibration.
     var onPreviewKey: ((KeySound) -> Void)?
-    /// Opens the iPhone's Settings app (only set inside the Keyboard Pro app).
-    var onOpenSystemSettings: (() -> Void)?
-    /// True when shown full screen in the Keyboard Pro app, not in the keyboard.
-    var isInApp = false
 
     /// Where the panel opens.
     enum Start { case main, spaceKeys }
@@ -77,7 +75,7 @@ final class SettingsPanel: UIView {
     private var action: (() -> Void)?
     private let previewBar = UIStackView()
     private var previewTimer: Timer?
-    private let scroll = UIScrollView()
+    private let scroll = SettingsScrollView()
     private let stack = UIStackView()
     private var screen = Screen.main
     private var fullAccess = false
@@ -85,7 +83,11 @@ final class SettingsPanel: UIView {
     private var offsets: [String: CGFloat] = [:]
     /// Where add() puts views: the page, or the inside of a card.
     private var target: UIStackView?
+    /// The rounded card rows are being added to; a title or note starts a new one.
+    private var currentCard: UIStackView?
     private static let headerTag = 900
+    private static let noteTag = 901
+    private static let bannerTag = 902
 
     // MARK: Fonts (follow the iPhone's text-size setting, within limits)
 
@@ -135,7 +137,7 @@ final class SettingsPanel: UIView {
         previewBar.isHidden = true
 
         stack.axis = .vertical
-        stack.spacing = 18
+        stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
         scroll.addSubview(stack)
 
@@ -193,6 +195,7 @@ final class SettingsPanel: UIView {
         let current = scroll.contentOffset.y
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         target = nil
+        currentCard = nil
 
         previewBar.isHidden = !screen.showsPreview
         rebuildPreview()
@@ -221,7 +224,6 @@ final class SettingsPanel: UIView {
             actionButton.setTitle(button, for: .normal)
             actionButton.layoutIfNeeded()
         }
-        actionButton.isHidden = button.isEmpty
         action = handler
     }
 
@@ -286,12 +288,7 @@ final class SettingsPanel: UIView {
     // MARK: Main menu
 
     private func renderMain() {
-        if isInApp {
-            setHeader("Keyboard Pro", button: "") {}
-            renderSetUp()
-        } else {
-            setHeader("Keyboard settings", button: "Done") { [weak self] in self?.onDone?() }
-        }
+        setHeader("Keyboard settings", button: "Done") { [weak self] in self?.onDone?() }
 
         if !fullAccess { add(accessBanner()) }
 
@@ -334,16 +331,21 @@ final class SettingsPanel: UIView {
     private func renderAppearance() {
         setHeader("Appearance", button: "Back") { [weak self] in self?.show(.main) }
 
-        add(label("Theme"))
-        add(choice(KBSettings.themeNames, settings.theme) { [weak self] in
+        add(labeled("Theme", choice(KBSettings.themeNames, settings.theme) { [weak self] in
             self?.settings.theme = $0
             self?.onThemeChanged?()
-        })
+        }))
 
-        add(label("One-handed keyboard"))
-        add(choice(["Off", "Left", "Right"], settings.oneHanded) { [weak self] in
+        add(row("Number row", toggle(settings.showNumberRow) { [weak self] in
+            self?.settings.showNumberRow = $0
+            self?.onHeightChanged?()
+        }))
+        add(note("When off, the keyboard is shorter and holding q–p types 1–0. "
+                 + "The ?123 page always shows numbers."))
+
+        add(labeled("One-handed keyboard", choice(["Off", "Left", "Right"], settings.oneHanded) { [weak self] in
             self?.settings.oneHanded = $0
-        })
+        }))
         add(note("Pushes the keys to one side. Use the arrows beside the keys to switch "
                  + "sides or go back to full width. Off in landscape."))
 
@@ -372,6 +374,9 @@ final class SettingsPanel: UIView {
         add(row("Emoji suggestions", toggle(settings.emojiSuggestionsOn) { [weak self] in
             self?.settings.emojiSuggestionsOn = $0
         }))
+        add(row("Calculator (4+5 shows 9)", toggle(settings.calculatorOn) { [weak self] in
+            self?.settings.calculatorOn = $0
+        }))
         add(row("Smart punctuation", toggle(settings.smartPunctuationOn) { [weak self] in
             self?.settings.smartPunctuationOn = $0
         }))
@@ -395,8 +400,8 @@ final class SettingsPanel: UIView {
         add(row("Show symbol hints on keys", toggle(settings.showHints) { [weak self] in
             self?.settings.showHints = $0
         }))
-        add(label("Vibration on long press"))
-        add(levels(settings.longHaptic) { [weak self] in self?.settings.longHaptic = $0 })
+        add(labeled("Vibration on long press",
+                    levels(settings.longHaptic) { [weak self] in self?.settings.longHaptic = $0 }))
 
         add(slider(value: Float(settings.longPressMs), min: 150, max: 800,
                    title: { "Long press duration: \(Int(($0 / 10).rounded() * 10)) ms" },
@@ -469,6 +474,14 @@ final class SettingsPanel: UIView {
         let preset = TacPreset.current(settings)
         let isMax = settings.maxUnlocked
         let feel = settings.effectiveFeel
+
+        add(slider(value: Float(settings.soundVolume * 100), min: 0, max: 100,
+                   title: { $0 < 1 ? "Sound volume: off" : "Sound volume: \(Int($0.rounded()))%" },
+                   changed: { [weak self] in self?.settings.soundVolume = Double($0.rounded()) / 100 },
+                   ended: { [weak self] in self?.onFeedbackChanged?() }))   // plays a sample
+        if settings.effectiveFeel.pack == "Apple" {
+            add(note("The Apple sound plays at your iPhone's volume; the slider only turns it off at 0%."))
+        }
 
         // Presets set the sound and the vibration together. They are free.
         add(header("Presets"))
@@ -546,12 +559,7 @@ final class SettingsPanel: UIView {
         add(button("Paste button (pastes copied text)") {
             choose(KBSettings.pasteAction)
         })
-        if onPickEmoji != nil {
-            add(button("Choose an emoji…") { [weak self] in self?.onPickEmoji?(side) })
-        } else {
-            // In the app the iPhone's own keyboard is up, so anything can be typed.
-            add(typedValueRow(choose))
-        }
+        add(button("Choose an emoji…") { [weak self] in self?.onPickEmoji?(side) })
 
         add(header("Symbols"))
         addTiles([",", "."] + KBSettings.symbolChoices.filter { $0 != "," && $0 != "." }, choose)
@@ -561,104 +569,98 @@ final class SettingsPanel: UIView {
         addTiles("abcdefghijklmnopqrstuvwxyz".map { String($0) }, choose)
     }
 
-    // MARK: Set-up (Keyboard Pro app only)
+    // MARK: Building blocks
 
-    private func renderSetUp() {
-        if !KBSettings.sharedAvailable {
-            add(warningBox("Settings can't reach the keyboard",
-                           "This install has no shared storage, so changes here won't reach the "
-                           + "keyboard. Use the gear on the keyboard to change its settings."))
+    /// Section titles, notes and banners sit on the background; everything
+    /// else goes into the current rounded card, with a divider between rows.
+    private func add(_ view: UIView) {
+        if let target = target {
+            target.addArrangedSubview(view)
+            return
         }
-
-        add(header("Set up"))
-        let steps = [
-            "1. Open Settings → General → Keyboard → Keyboards",
-            "2. Tap Add New Keyboard… and choose Keyboard Pro",
-            "3. Tap Keyboard Pro and turn on Allow Full Access for sound, vibration, Paste "
-                + "and saving your words. The keyboard never uses the internet.",
-            "4. In any app, hold the globe key and pick Keyboard Pro",
-        ]
-        steps.forEach { add(label($0)) }
-        if onOpenSystemSettings != nil {
-            add(button("Open iPhone Settings") { [weak self] in self?.onOpenSystemSettings?() })
+        switch view.tag {
+        case Self.headerTag, Self.noteTag, Self.bannerTag:
+            currentCard = nil
+            if view.tag == Self.headerTag, let previous = stack.arrangedSubviews.last {
+                stack.setCustomSpacing(26, after: previous)      // room above a title
+            }
+            stack.addArrangedSubview(view.tag == Self.bannerTag ? view : inset(view))
+        default:
+            let card = currentCard ?? newCard()
+            if !card.arrangedSubviews.isEmpty { card.addArrangedSubview(divider()) }
+            card.addArrangedSubview(view is TapRow ? view : padded(view))
         }
-
-        add(header("Try it"))
-        let field = UITextField()
-        field.placeholder = "Type here to try the keyboard"
-        field.borderStyle = .roundedRect
-        field.font = Self.font(16)
-        field.adjustsFontForContentSizeCategory = true
-        field.returnKeyType = .done
-        field.addAction(UIAction { [weak field] _ in field?.resignFirstResponder() },
-                        for: .editingDidEndOnExit)
-        soft(field.heightAnchor.constraint(equalToConstant: 44)).isActive = true
-        add(field)
-        add(header("Settings"))
     }
 
-    /// A text field for typing an Action Key value (letters, symbols, emoji …).
-    private func typedValueRow(_ choose: @escaping (String) -> Void) -> UIView {
-        let field = UITextField()
-        field.placeholder = "Or type anything, even an emoji"
-        field.borderStyle = .roundedRect
-        field.font = Self.font(16)
-        field.adjustsFontForContentSizeCategory = true
-        field.autocorrectionType = .no
-        field.autocapitalizationType = .none
-        field.returnKeyType = .done
-
-        let use = button("Use") { [weak field] in
-            guard let text = field?.text?.trimmingCharacters(in: .whitespaces),
-                  !text.isEmpty else { return }
-            choose(text)
+    private func newCard() -> UIStackView {
+        let card = UIStackView()
+        card.axis = .vertical
+        card.spacing = 0
+        card.backgroundColor = .secondarySystemGroupedBackground
+        card.layer.cornerRadius = 12
+        card.layer.cornerCurve = .continuous
+        card.clipsToBounds = true
+        // A gap before a new card, unless it follows its own title.
+        if let previous = stack.arrangedSubviews.last, previous.tag != Self.headerTag {
+            stack.setCustomSpacing(20, after: previous)
         }
-        field.addAction(UIAction { [weak field] _ in
-            guard let text = field?.text?.trimmingCharacters(in: .whitespaces),
-                  !text.isEmpty else { return }
-            choose(text)
-        }, for: .editingDidEndOnExit)
-
-        let row = UIStackView(arrangedSubviews: [field, use])
-        row.axis = .horizontal
-        row.spacing = 8
-        row.alignment = .center
-        use.setContentHuggingPriority(.required, for: .horizontal)
-        soft(field.heightAnchor.constraint(equalToConstant: 44)).isActive = true
-        return row
+        stack.addArrangedSubview(card)
+        currentCard = card
+        return card
     }
 
-    private func warningBox(_ title: String, _ text: String) -> UIView {
-        let heading = label(title)
-        heading.font = Self.font(15, .semibold)
-        let body = note(text)
-        body.textColor = .label
-        let content = UIStackView(arrangedSubviews: [heading, body])
-        content.axis = .vertical
-        content.spacing = 6
-        content.translatesAutoresizingMaskIntoConstraints = false
+    /// A row's content, 16 pt in from the card's edges.
+    private func padded(_ view: UIView) -> UIView {
         let box = UIView()
-        box.backgroundColor = UIColor.systemRed.withAlphaComponent(0.15)
-        box.layer.cornerRadius = 10
-        box.addSubview(content)
+        view.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(view)
         NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 12),
-            content.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -12),
-            content.topAnchor.constraint(equalTo: box.topAnchor, constant: 10),
-            content.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -10),
+            view.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 16),
+            view.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -16),
+            view.topAnchor.constraint(equalTo: box.topAnchor, constant: 6),
+            view.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -6),
         ])
         return box
     }
 
-    // MARK: Building blocks
+    /// Titles and notes line up with the text inside the cards.
+    private func inset(_ view: UIView) -> UIView {
+        let box = UIView()
+        box.tag = view.tag
+        view.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 16),
+            view.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -16),
+            view.topAnchor.constraint(equalTo: box.topAnchor),
+            view.bottomAnchor.constraint(equalTo: box.bottomAnchor),
+        ])
+        return box
+    }
 
-    private func add(_ view: UIView) {
-        let into = target ?? stack
-        // Extra space above each section title.
-        if view.tag == Self.headerTag, let previous = into.arrangedSubviews.last {
-            into.setCustomSpacing(28, after: previous)
-        }
-        into.addArrangedSubview(view)
+    /// A thin line between rows, starting where the text starts.
+    private func divider() -> UIView {
+        let box = UIView()
+        let line = UIView()
+        line.backgroundColor = .separator
+        line.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(line)
+        NSLayoutConstraint.activate([
+            line.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 16),
+            line.trailingAnchor.constraint(equalTo: box.trailingAnchor),
+            line.topAnchor.constraint(equalTo: box.topAnchor),
+            line.bottomAnchor.constraint(equalTo: box.bottomAnchor),
+            soft(box.heightAnchor.constraint(equalToConstant: 0.5)),
+        ])
+        return box
+    }
+
+    /// A title with its control underneath, as one row (segmented choices).
+    private func labeled(_ title: String, _ control: UIView) -> UIStackView {
+        let s = UIStackView(arrangedSubviews: [label(title), control])
+        s.axis = .vertical
+        s.spacing = 8
+        return s
     }
 
     /// A grid of tiles, eight per row (symbol pickers).
@@ -668,19 +670,32 @@ final class SettingsPanel: UIView {
 
     /// Lays views out in equal columns; the last row is padded to stay aligned.
     private func addGrid(_ views: [UIView], perRow: Int) {
+        let rows = UIStackView()
+        rows.axis = .vertical
+        rows.spacing = 6
         var index = 0
         while index < views.count {
             var line = Array(views[index..<min(index + perRow, views.count)])
             while line.count < perRow { line.append(UIView()) }
-            add(grid(line))
+            rows.addArrangedSubview(grid(line))
             index += perRow
         }
+        let box = UIView()
+        rows.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(rows)
+        NSLayoutConstraint.activate([
+            rows.leadingAnchor.constraint(equalTo: box.leadingAnchor),
+            rows.trailingAnchor.constraint(equalTo: box.trailingAnchor),
+            rows.topAnchor.constraint(equalTo: box.topAnchor, constant: 4),
+            rows.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -4),
+        ])
+        add(box)
     }
 
     private func label(_ text: String) -> UILabel {
         let l = UILabel()
         l.text = text
-        l.font = Self.font(15)
+        l.font = Self.font(17)
         l.adjustsFontForContentSizeCategory = true
         l.textColor = .label
         l.numberOfLines = 0
@@ -721,13 +736,14 @@ final class SettingsPanel: UIView {
         let l = label(text)
         l.font = Self.font(13)
         l.textColor = .secondaryLabel
+        l.tag = Self.noteTag
         return l
     }
 
     private func button(_ title: String, _ action: @escaping () -> Void) -> UIButton {
         let b = UIButton(type: .system)
         b.setTitle(title, for: .normal)
-        b.titleLabel?.font = Self.font(15, .medium)
+        b.titleLabel?.font = Self.font(17)
         b.titleLabel?.adjustsFontForContentSizeCategory = true
         b.addAction(UIAction { _ in action() }, for: .touchUpInside)
         soft(b.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)).isActive = true
@@ -753,7 +769,7 @@ final class SettingsPanel: UIView {
         b.titleLabel?.minimumScaleFactor = 0.7
         b.addAction(UIAction { _ in action() }, for: .touchUpInside)
         b.setTitleColor(.label, for: .normal)
-        b.backgroundColor = KeyButton.normalColor
+        b.backgroundColor = .tertiarySystemFill
         b.layer.cornerRadius = 8
         soft(b.heightAnchor.constraint(equalToConstant: 44)).isActive = true
         return b
@@ -820,20 +836,16 @@ final class SettingsPanel: UIView {
         return badge
     }
 
-    /// One line of the main menu: icon, name, current value, chevron.
+    /// One line of the main menu: name, current value in grey, chevron.
     private func menuRow(_ icon: String, _ title: String, value: String, tint: UIColor = .label,
                          _ action: @escaping () -> Void) -> UIView {
-        let image = UIImageView(image: UIImage(systemName: icon))
-        image.tintColor = tint
-        image.contentMode = .scaleAspectFit
-
         let name = label(title)
-        name.font = Self.font(16, .medium)
         name.numberOfLines = 1
         name.setContentHuggingPriority(.required, for: .horizontal)
         name.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        let current = note(value)
+        let current = label(value)
+        current.textColor = .secondaryLabel
         current.numberOfLines = 1
         current.textAlignment = .right
         current.lineBreakMode = .byTruncatingTail
@@ -845,12 +857,9 @@ final class SettingsPanel: UIView {
         chevron.contentMode = .scaleAspectFit
 
         let tap = TapRow(card: true)
-        let parts: [UIView] = [image, name, current, chevron]
+        let parts: [UIView] = [name, current, chevron]
         parts.forEach { tap.content.addArrangedSubview($0) }
-        NSLayoutConstraint.activate([
-            image.widthAnchor.constraint(equalToConstant: 24),
-            chevron.widthAnchor.constraint(equalToConstant: 10),
-        ])
+        chevron.widthAnchor.constraint(equalToConstant: 10).isActive = true
         tap.accessibilityLabel = title
         tap.accessibilityValue = value
         tap.addAction(UIAction { _ in action() }, for: .touchUpInside)
@@ -882,7 +891,8 @@ final class SettingsPanel: UIView {
 
         let box = UIView()
         box.backgroundColor = UIColor.systemOrange.withAlphaComponent(0.18)
-        box.layer.cornerRadius = 10
+        box.layer.cornerRadius = 12
+        box.tag = Self.bannerTag
         box.addSubview(content)
         NSLayoutConstraint.activate([
             icon.widthAnchor.constraint(equalToConstant: 20),
@@ -970,6 +980,28 @@ final class SettingsPanel: UIView {
     }
 }
 
+// MARK: - Scroll view
+
+/// Scrolls even when the drag starts on a button, switch or tile (most of
+/// the settings page), and responds to taps at once instead of waiting to
+/// see whether the touch becomes a scroll. Sliders keep their drag.
+final class SettingsScrollView: UIScrollView {
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        delaysContentTouches = false
+        canCancelContentTouches = true
+        alwaysBounceVertical = true
+        keyboardDismissMode = .onDrag
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
+
+    override func touchesShouldCancel(in view: UIView) -> Bool {
+        if view is UISlider { return false }
+        return true
+    }
+}
+
 // MARK: - Tappable row
 
 /// A whole row that acts as one button (main menu lines, locked Max rows).
@@ -985,8 +1017,8 @@ final class TapRow: UIControl {
         content.translatesAutoresizingMaskIntoConstraints = false
         addSubview(content)
 
-        let inset: CGFloat = card ? 12 : 0
-        let height = heightAnchor.constraint(greaterThanOrEqualToConstant: card ? 48 : 44)
+        let inset: CGFloat = card ? 16 : 0
+        let height = heightAnchor.constraint(greaterThanOrEqualToConstant: card ? 52 : 44)
         height.priority = UILayoutPriority(999)
         NSLayoutConstraint.activate([
             content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
@@ -995,10 +1027,6 @@ final class TapRow: UIControl {
             content.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
             height,
         ])
-        if card {
-            backgroundColor = KeyButton.normalColor
-            layer.cornerRadius = 10
-        }
         isAccessibilityElement = true
         accessibilityTraits = .button
     }
@@ -1006,7 +1034,7 @@ final class TapRow: UIControl {
     required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
 
     override var isHighlighted: Bool {
-        didSet { alpha = isHighlighted ? 0.5 : 1 }
+        didSet { backgroundColor = isHighlighted ? .systemFill : .clear }
     }
 }
 

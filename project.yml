@@ -14,24 +14,14 @@ targets:
   KeyboardPro:
     type: application
     platform: iOS
-    # The app shows the full settings, so it also compiles the keyboard's code
-    # (settings screen, sounds, key styles) and bundles the sound files.
-    sources: [App, Keyboard]
+    sources: [App]
     scheme: {}
-    entitlements:
-      path: Supporting/App.entitlements
-      properties:
-        com.apple.security.application-groups: [group.com.example.keyboardpro]
     info:
       path: Supporting/App-Info.plist
       properties:
         CFBundleDisplayName: Keyboard Pro
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
-        # keyboardpro://settings opens the app (the keyboard's gear button)
-        CFBundleURLTypes:
-          - CFBundleURLName: com.example.keyboardpro
-            CFBundleURLSchemes: [keyboardpro]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.keyboardpro
@@ -43,10 +33,6 @@ targets:
     type: app-extension
     platform: iOS
     sources: [Keyboard]
-    entitlements:
-      path: Supporting/Keyboard.entitlements
-      properties:
-        com.apple.security.application-groups: [group.com.example.keyboardpro]
     info:
       path: Supporting/Keyboard-Info.plist
       properties:

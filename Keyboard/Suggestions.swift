@@ -13,6 +13,8 @@ struct Suggestion {
     var isPaste = false   // true = "paste the code I copied"
     var isEmoji = false   // true = an emoji for the word just typed
     var isShortcut = false // true = the user's text replacement ("omw" -> "On my way!")
+    var isCalc = false     // true = the answer to a sum typed before the cursor ("4+5" -> "9")
+    var calcDelete = 0     // characters of the sum to replace with the answer
 }
 
 final class SuggestionEngine {
@@ -28,9 +30,7 @@ final class SuggestionEngine {
 
     private let fileURL: URL? = {
         let fm = FileManager.default
-        // Shared with the app (so "Clear" in the app works), else the keyboard's own folder.
-        let shared = fm.containerURL(forSecurityApplicationGroupIdentifier: KBSettings.appGroup)
-        guard let dir = shared ?? fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+        guard let dir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
             return nil
         }
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)

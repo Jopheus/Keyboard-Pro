@@ -7,26 +7,7 @@ import UIKit
 
 final class KBSettings {
     static let shared = KBSettings()
-
-    /// Storage shared by the Keyboard Pro app and the keyboard (App Group).
-    /// The app writes settings; the keyboard can always read them, and can
-    /// write (My words, recently used emoji) only when Full Access is on.
-    static let appGroup = "group.com.example.keyboardpro"
-
-    /// False when this install has no App Group (for example if the signing
-    /// tool dropped it). Then each side keeps its own settings, and the
-    /// keyboard shows its settings itself instead of opening the app.
-    static let sharedAvailable =
-        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup) != nil
-
-    private let d: UserDefaults = KBSettings.sharedAvailable
-        ? (UserDefaults(suiteName: KBSettings.appGroup) ?? .standard) : .standard
-
-    /// Last Full Access state the keyboard saw (the app can't check it itself).
-    var keyboardFullAccess: Bool? {
-        get { d.object(forKey: "keyboardFullAccess") as? Bool }
-        set { d.set(newValue, forKey: "keyboardFullAccess") }
-    }
+    private let d = UserDefaults.standard
 
     /// Default long-press symbol for each letter.
     static let defaultSymbols: [String: String] = [
@@ -70,7 +51,7 @@ final class KBSettings {
     /// Vibration when typing: 0 off, 1 light, 2 medium, 3 strong, 4 soft, 5 crisp
     /// (see TapHaptic). Long press uses 0…3 only.
     var tapHaptic: Int {
-        get { int("tapHaptic", 2) }
+        get { int("tapHaptic", 6) }        // Apple preset
         set { d.set(newValue, forKey: "tapHaptic") }
     }
     var longHaptic: Int {
@@ -82,9 +63,9 @@ final class KBSettings {
         get { int("theme", 3) }
         set { d.set(newValue, forKey: "theme") }
     }
-    /// Tac Tile sound pack (file prefix, see SoundPack.all). Default: the Brown preset.
+    /// Tac Tile sound pack (file prefix, see SoundPack.all). Default: the Apple preset.
     var soundPack: String {
-        get { SoundPack.named(d.string(forKey: "soundPack") ?? "Typewriter").file }
+        get { SoundPack.named(d.string(forKey: "soundPack") ?? "Apple").file }
         set { d.set(newValue, forKey: "soundPack") }
     }
     static let themeNames = ["Auto", "Light", "Dark", "Glass"]
@@ -95,8 +76,8 @@ final class KBSettings {
         for key in ["longPressMs", "suggestionsOn", "autocorrectOn", "tapHaptic", "longHaptic",
                     "theme", "soundPack", "pasteCodesOn", "leftKey", "rightKey", "rowKey",
                     "leftKeyShown", "rightKeyShown", "rowKeyShown", "symbolMap", "historyOn",
-                    "heightScale", "showHints", "oneHanded", "smartPunctuationOn",
-                    "emojiSuggestionsOn"] {
+                    "heightScale", "showHints", "oneHanded", "smartPunctuationOn", "showNumberRow", "soundVolume",
+                    "emojiSuggestionsOn", "calculatorOn"] {
             d.removeObject(forKey: key)
         }
     }
@@ -191,10 +172,26 @@ final class KBSettings {
         get { bool("emojiSuggestionsOn", true) }
         set { d.set(newValue, forKey: "emojiSuggestionsOn") }
     }
+    /// Show the answer to a typed sum ("4+5" -> "= 9") in the suggestion bar.
+    var calculatorOn: Bool {
+        get { bool("calculatorOn", true) }
+        set { d.set(newValue, forKey: "calculatorOn") }
+    }
     /// Endings offered when holding the full stop in web and email fields.
     static let webDomains = [".com", ".net", ".org", ".edu", ".my", ".com.my", ".co"]
 
     /// Small long-press symbol shown in the corner of each letter key.
+    /// The 1–0 row above the letters. When hidden, hold q–p for 1–0.
+    /// Tac Tile key sound volume, 0…1. The Apple preset plays at the
+    /// iPhone's own volume, so only 0 (off) changes it.
+    var soundVolume: Double {
+        get { min(max(double("soundVolume", 1.0), 0), 1) }
+        set { d.set(newValue, forKey: "soundVolume") }
+    }
+    var showNumberRow: Bool {
+        get { bool("showNumberRow", true) }
+        set { d.set(newValue, forKey: "showNumberRow") }
+    }
     var showHints: Bool {
         get { bool("showHints", true) }
         set { d.set(newValue, forKey: "showHints") }
@@ -206,8 +203,33 @@ final class KBSettings {
     }
     /// Most recently used emoji first.
     var recentEmoji: [String] {
-        get { d.stringArray(forKey: "recentEmoji") ?? [] }
+        get {
+            // The old WeChat codes such as "[Facepalm]" were removed: drop them once.
+            if !bool("wechatRemoved", false) {
+                d.set(true, forKey: "wechatRemoved")
+                let kept = (d.stringArray(forKey: "recentEmoji") ?? [])
+                    .filter { !($0.hasPrefix("[") && $0.hasSuffix("]") && $0.count > 2) }
+                d.set(kept, forKey: "recentEmoji")
+            }
+            return d.stringArray(forKey: "recentEmoji") ?? []
+        }
         set { d.set(newValue, forKey: "recentEmoji") }
+    }
+
+    /// Emoji combos the user made, newest first.
+    var myCombos: [String] {
+        get { d.stringArray(forKey: "myCombos") ?? [] }
+        set { d.set(newValue, forKey: "myCombos") }
+    }
+    func addCombo(_ combo: String) {
+        let text = combo.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        var list = myCombos.filter { $0 != text }
+        list.insert(text, at: 0)
+        myCombos = Array(list.prefix(100))
+    }
+    func removeCombo(_ combo: String) {
+        myCombos = myCombos.filter { $0 != combo }
     }
     func addRecentEmoji(_ emoji: String) {
         var list = recentEmoji.filter { $0 != emoji }
@@ -252,14 +274,14 @@ final class KBSettings {
         maxUnlocked ? CGFloat(heightScale) : 1
     }
     /// The Tac Tile sound and vibration in use. Without Max only the four
-    /// presets are available, so any other mix falls back to the Brown preset.
+    /// presets are available, so any other mix falls back to the Apple preset.
     var effectiveFeel: (pack: String, haptic: Int) {
         let pack = soundPack
         let haptic = tapHaptic
         if maxUnlocked || TacPreset.all.contains(where: { $0.pack == pack && $0.haptic == haptic }) {
             return (pack, haptic)
         }
-        let fallback = TacPreset.all[1]
+        let fallback = TacPreset.all[0]           // Apple
         return (fallback.pack, fallback.haptic)
     }
     var effectiveHistory: Bool {

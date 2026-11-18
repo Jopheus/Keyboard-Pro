@@ -1,6 +1,6 @@
 //
 //  KeyboardViewController.swift
-//  Keyboard Pro for iPhone  (version 16)
+//  Keyboard Pro for iPhone  (version 18)
 //
 //  - Number row always on top (a little shorter than the letter rows)
 //  - Long-press a letter: slide along a row of its symbol and accents
@@ -13,8 +13,6 @@
 //  - One-handed mode (keys pushed left or right)
 //  - Your iPhone text replacements, smart punctuation, emoji suggestions
 //  - Web and email fields: / or @ beside space, hold . for .com .net …
-//  - The gear opens the Keyboard Pro app, where all settings live. Settings
-//    are read from storage shared with the app each time the keyboard opens.
 //  - Hold shift to turn on caps lock (or double-tap it)
 //  - Suggestion bar: word completion, auto-correct, add words, paste copied code
 //  - Settings (gear button): theme, switch sound + vibration, Max options
@@ -393,12 +391,26 @@ final class EmojiCell: UICollectionViewCell {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
 
-    func show(_ text: String, isText: Bool) {
+    static let comboFontSize: CGFloat = 20
+
+    func show(_ text: String, isCombo: Bool) {
         label.text = text
-        label.font = isText ? .systemFont(ofSize: 13, weight: .medium) : .systemFont(ofSize: 28)
-        label.adjustsFontSizeToFitWidth = isText
-        label.minimumScaleFactor = 0.6
+        label.font = .systemFont(ofSize: isCombo ? Self.comboFontSize : 28)
+        label.adjustsFontSizeToFitWidth = isCombo
+        label.minimumScaleFactor = 0.5
         label.textColor = .label
+        contentView.backgroundColor = .clear
+    }
+
+    /// The "+ New" cell at the start of My combos.
+    func showAddButton(_ text: String) {
+        label.text = text
+        label.font = .systemFont(ofSize: 15, weight: .semibold)
+        label.adjustsFontSizeToFitWidth = true
+        label.minimumScaleFactor = 0.6
+        label.textColor = tintColor
+        contentView.backgroundColor = KeyButton.functionColor
+        contentView.layer.cornerRadius = 8
     }
 }
 
@@ -524,6 +536,13 @@ final class KeyboardViewController: UIInputViewController {
     private let pickLabel = UILabel()
     /// Set while choosing an emoji for a space-bar key (0 = left, 1 = right).
     private var pickingKeySide: Int?
+    /// Set while making a new combo: tapped emoji are added to it.
+    private var comboDraft: String?
+    /// Set while asking whether to delete one of the user's combos.
+    private var comboToDelete: String?
+    private let bannerUndo = UIButton(type: .system)
+    private let bannerSave = UIButton(type: .system)
+    private let bannerCancel = UIButton(type: .system)
     private var settingsStart = SettingsPanel.Start.main
 
     private var settingsPanel: SettingsPanel?
@@ -655,17 +674,17 @@ final class KeyboardViewController: UIInputViewController {
         let numeric = (type == .decimalPad || type == .numbersAndPunctuation)
         page = numeric ? .symbols : .letters
         pickingKeySide = nil
+        comboDraft = nil
+        comboToDelete = nil
+        let wasSearching = (emojiQuery != nil)
         emojiQuery = nil
         typedSymbol = false
         manualShift = false
         loadLexicon()                           // picks up new text replacements
-
-        // Settings may have changed in the Keyboard Pro app: apply them all.
-        if hasFullAccess { settings.keyboardFullAccess = true }   // tells the app
-        applyTheme()
-        feedback.reload(settings)
-        applyMetrics(landscape: isLandscape ?? false)
-        buildKeyboard()
+        if wasSearching || builtPage != page || builtWithGlobe != needsInputModeSwitchKey
+            || builtFieldKind != fieldKind {
+            buildKeyboard()
+        }
         updateAutoShift()
         refreshSuggestions()
         refreshReturnKey()
@@ -706,7 +725,9 @@ final class KeyboardViewController: UIInputViewController {
         isLandscape = landscape
         topInset = landscape ? 26 : 36
         // Max: the key area can be made shorter or taller.
-        let base: CGFloat = landscape ? 228 : 298
+        // Without the number row the keyboard is one (short) row lower.
+        let numbers = settings.showNumberRow
+        let base: CGFloat = landscape ? (numbers ? 228 : 192) : (numbers ? 298 : 252)
         let scaled = topInset + (base - topInset) * settings.effectiveHeightScale
         heightConstraint?.constant = landscape ? min(scaled, 260) : scaled
         topConstraint?.constant = topInset
@@ -738,12 +759,7 @@ final class KeyboardViewController: UIInputViewController {
             let panel = emojiPanel ?? makeEmojiPanel()
             emojiList?.reloadData()
             panel.isHidden = false
-            let picking = (pickingKeySide != nil)
-            pickBanner?.isHidden = !picking
-            emojiBar?.isHidden = picking
-            if let side = pickingKeySide {
-                pickLabel.text = "Emoji for: \(KBSettings.shortcutNames[side])"
-            }
+            let picking = refreshEmojiBanner()
             surface.keys = picking ? [] : emojiBarKeys
             surface.passthroughs = [emojiList as UIView?, emojiTabs, pickBanner].compactMap { $0 }
             return
@@ -813,9 +829,11 @@ final class KeyboardViewController: UIInputViewController {
             rightChoices = KBSettings.webDomains
         }
 
-        // Number row, then rows 1 and 2. The A–L row has 9 keys, so it sits
-        // half a key in from the edges like a normal keyboard.
-        for chars in [numberRow, rows[0], rows[1]] {
+        // Number row (unless turned off; the ?123 pages always have it), then
+        // rows 1 and 2. The A–L row has 9 keys, so it sits half a key in from
+        // the edges like a normal keyboard.
+        let showNumbers = settings.showNumberRow || page != .letters
+        for chars in showNumbers ? [numberRow, rows[0], rows[1]] : [rows[0], rows[1]] {
             let keys = chars.map { makeCharKey($0) }
             keys.forEach { width($0, 0.1) }
             addRow(keys, fill: false)
@@ -880,7 +898,11 @@ final class KeyboardViewController: UIInputViewController {
 
         // The number row is 80% as tall as the letter rows.
         let rowViews = rowsStack.arrangedSubviews
-        if rowViews.count > 2 {
+        if !showNumbers, let first = rowViews.first {
+            for other in rowViews.dropFirst() {
+                widths.append(other.heightAnchor.constraint(equalTo: first.heightAnchor))
+            }
+        } else if rowViews.count > 2 {
             let letterRow = rowViews[1]
             widths.append(rowViews[0].heightAnchor.constraint(equalTo: letterRow.heightAnchor,
                                                               multiplier: 0.8))
@@ -897,8 +919,10 @@ final class KeyboardViewController: UIInputViewController {
 
     private func makeCharKey(_ s: String) -> KeyButton {
         let isLetter = (page == .letters) && (s.first?.isLetter == true)
+        // Without the number row, the top letters give their number first.
+        let digit = isLetter ? topRowDigit(s) : nil
         let key = KeyButton(kind: .char, title: s, output: s,
-                            alternate: isLetter ? settings.effectiveSymbols[s] : nil)
+                            alternate: digit ?? (isLetter ? settings.effectiveSymbols[s] : nil))
         register(key)
         if isLetter { letterKeys.append(key) }
         return key
@@ -957,12 +981,20 @@ final class KeyboardViewController: UIInputViewController {
         pickLabel.textColor = .label
         pickLabel.adjustsFontSizeToFitWidth = true
         pickLabel.minimumScaleFactor = 0.7
-        let cancel = UIButton(type: .system)
-        cancel.setTitle("Cancel", for: .normal)
-        cancel.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
-        cancel.setContentHuggingPriority(.required, for: .horizontal)
-        cancel.addAction(UIAction { [weak self] _ in self?.finishPicking(nil) }, for: .touchUpInside)
-        let banner = UIStackView(arrangedSubviews: [pickLabel, cancel])
+        // Also used while making a combo (Undo / Save) and to confirm a delete.
+        bannerUndo.setImage(UIImage(systemName: "delete.left"), for: .normal)
+        bannerUndo.accessibilityLabel = "Remove last"
+        bannerUndo.addAction(UIAction { [weak self] _ in self?.undoComboDraft() }, for: .touchUpInside)
+        bannerSave.addAction(UIAction { [weak self] _ in self?.confirmBanner() }, for: .touchUpInside)
+        bannerCancel.setTitle("Cancel", for: .normal)
+        bannerCancel.addAction(UIAction { [weak self] _ in self?.cancelBanner() }, for: .touchUpInside)
+        for b in [bannerUndo, bannerSave, bannerCancel] {
+            b.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
+            b.setContentHuggingPriority(.required, for: .horizontal)
+            b.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
+        pickLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let banner = UIStackView(arrangedSubviews: [pickLabel, bannerUndo, bannerSave, bannerCancel])
         banner.axis = .horizontal
         banner.spacing = 8
         banner.isLayoutMarginsRelativeArrangement = true
@@ -980,6 +1012,10 @@ final class KeyboardViewController: UIInputViewController {
         list.register(EmojiHeader.self,
                       forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader,
                       withReuseIdentifier: "header")
+        // Hold one of your own combos to delete it.
+        let hold = UILongPressGestureRecognizer(target: self, action: #selector(emojiHeld(_:)))
+        hold.minimumPressDuration = 0.5
+        list.addGestureRecognizer(hold)
 
         // Category tabs: search, then tap a tab to jump to a group.
         let tabs = UIStackView()
@@ -1085,6 +1121,80 @@ final class KeyboardViewController: UIInputViewController {
         pickingKeySide = nil
         settingsStart = .spaceKeys
         page = .settings
+        buildKeyboard()
+    }
+
+    // MARK: My combos
+
+    /// Shows the banner above the emoji list when picking, making a combo or
+    /// deleting one. Returns true when it is shown (the bottom keys hide then).
+    @discardableResult
+    private func refreshEmojiBanner() -> Bool {
+        let shown = pickingKeySide != nil || comboDraft != nil || comboToDelete != nil
+        pickBanner?.isHidden = !shown
+        emojiBar?.isHidden = shown
+        bannerUndo.isHidden = (comboDraft == nil)
+        bannerSave.isHidden = (comboDraft == nil && comboToDelete == nil)
+        bannerSave.setTitleColor(comboToDelete != nil ? .systemRed : nil, for: .normal)
+        if let side = pickingKeySide {
+            pickLabel.text = "Emoji for: \(KBSettings.shortcutNames[side])"
+        } else if let draft = comboDraft {
+            pickLabel.text = draft.isEmpty ? "Tap emoji to build a combo" : draft
+            bannerSave.setTitle("Save", for: .normal)
+            bannerSave.isEnabled = !draft.trimmingCharacters(in: .whitespaces).isEmpty
+            bannerUndo.isEnabled = !draft.isEmpty
+        } else if let combo = comboToDelete {
+            pickLabel.text = "Delete \(combo)?"
+            bannerSave.setTitle("Delete", for: .normal)
+            bannerSave.isEnabled = true
+        }
+        return shown
+    }
+
+    /// "+ New" was tapped. Text selected in the app (for example a text face
+    /// typed with the letter keys) starts the combo; tapped emoji are added.
+    private func startCombo() {
+        comboToDelete = nil
+        comboDraft = proxy.selectedText ?? ""
+        buildKeyboard()
+    }
+
+    private func undoComboDraft() {
+        guard comboDraft?.isEmpty == false else { return }
+        comboDraft?.removeLast()
+        refreshEmojiBanner()
+    }
+
+    /// Save (new combo) or Delete (a combo that was held).
+    private func confirmBanner() {
+        if let draft = comboDraft {
+            settings.addCombo(draft)
+            comboDraft = nil
+        } else if let combo = comboToDelete {
+            settings.removeCombo(combo)
+            comboToDelete = nil
+        }
+        buildKeyboard()
+    }
+
+    private func cancelBanner() {
+        if pickingKeySide != nil {
+            finishPicking(nil)
+            return
+        }
+        comboDraft = nil
+        comboToDelete = nil
+        buildKeyboard()
+    }
+
+    /// Holding one of your own combos offers to delete it.
+    @objc private func emojiHeld(_ gesture: UILongPressGestureRecognizer) {
+        guard gesture.state == .began, pickingKeySide == nil, comboDraft == nil,
+              let list = emojiList,
+              let path = list.indexPathForItem(at: gesture.location(in: list)),
+              emojiGroups[path.section].kind == .mine, path.item > 0 else { return }
+        feedback.keyDown()
+        comboToDelete = emojiGroups[path.section].items[path.item]
         buildKeyboard()
     }
 
@@ -1635,6 +1745,13 @@ final class KeyboardViewController: UIInputViewController {
             list.append(Suggestion(title: "Paste code", text: "", isAdd: false, isPaste: true))
         }
 
+        // The answer to a typed sum goes first, so it lands in the middle slot.
+        if settings.calculatorOn,
+           let answer = Calculator.answer(forTextBefore: proxy.documentContextBeforeInput ?? "") {
+            list.append(Suggestion(title: answer.result, text: answer.result, isAdd: false,
+                                   isCalc: true, calcDelete: answer.deleteCount))
+        }
+
         if settings.suggestionsOn {
             let context = wordContext()
             let custom = knownWords
@@ -1664,8 +1781,15 @@ final class KeyboardViewController: UIInputViewController {
         UIView.performWithoutAnimation {
             for (slot, button) in suggestionButtons.enumerated() {
                 let index = slotOrder[slot]
+                let isCalc = index < list.count && list[index].isCalc
                 button.setTitle(index < list.count ? list[index].title : "", for: .normal)
                 button.isEnabled = index < list.count
+                // A calculator answer is blue and bold on a soft blue pill, so it stands out.
+                button.setTitleColor(isCalc ? .systemBlue : .label, for: .normal)
+                button.titleLabel?.font = .systemFont(ofSize: 16,
+                                                      weight: (isCalc || slot == 1) ? .semibold : .regular)
+                button.backgroundColor = isCalc ? UIColor.systemBlue.withAlphaComponent(0.15) : .clear
+                button.layer.cornerRadius = 8
                 button.layoutIfNeeded()
             }
         }
@@ -1681,6 +1805,13 @@ final class KeyboardViewController: UIInputViewController {
 
         if choice.isPaste {
             pasteCode()
+            return
+        }
+        if choice.isCalc {
+            // Replaces the sum with its answer: "4+5" -> "9".
+            for _ in 0..<choice.calcDelete { proxy.deleteBackward() }
+            proxy.insertText(choice.text)
+            afterSuggestion()
             return
         }
         if choice.isShortcut {
@@ -1859,6 +1990,14 @@ final class KeyboardViewController: UIInputViewController {
 
     // MARK: Long-press picker
 
+    /// 1–0 for q–p when the number row is turned off, else nil.
+    private func topRowDigit(_ letter: String) -> String? {
+        guard !settings.showNumberRow, let index = letterRows[0].firstIndex(of: letter) else {
+            return nil
+        }
+        return numberRow[index]
+    }
+
     /// The symbol first, then accented letters (capitals when shift is on).
     private func longPressChoices(for key: KeyButton) -> [String] {
         guard key.kind == .char else { return [] }
@@ -1866,6 +2005,9 @@ final class KeyboardViewController: UIInputViewController {
         guard page == .letters else { return [] }
         var choices: [String] = []
         if let alt = key.alternate { choices.append(alt) }
+        if topRowDigit(key.base) != nil, let symbol = settings.effectiveSymbols[key.base] {
+            choices.append(symbol)              // number first, then the usual symbol
+        }
         let capital = key.output != key.base
         for letter in accents[key.base] ?? [] {
             let shown = capital ? letter.uppercased() : letter
@@ -1944,6 +2086,8 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func startEmojiSearch() {
+        comboDraft = nil
+        comboToDelete = nil
         emojiQuery = ""
         page = .letters
         shift = .off
@@ -1971,11 +2115,10 @@ final class KeyboardViewController: UIInputViewController {
         let items = query.trimmingCharacters(in: .whitespaces).isEmpty
             ? settings.recentEmoji : found
         for item in items {
-            let isText = item.hasPrefix("[") && item.count > 2
             let b = UIButton(type: .system)
             b.setTitle(item, for: .normal)
             b.setTitleColor(.label, for: .normal)
-            b.titleLabel?.font = isText ? .systemFont(ofSize: 13, weight: .medium) : .systemFont(ofSize: 24)
+            b.titleLabel?.font = Self.isCombo(item) ? .systemFont(ofSize: 18) : .systemFont(ofSize: 24)
             b.addAction(UIAction { [weak self] _ in self?.insertEmoji(item) }, for: .touchUpInside)
             b.widthAnchor.constraint(greaterThanOrEqualToConstant: 36).isActive = true
             searchResults.addArrangedSubview(b)
@@ -1997,10 +2140,15 @@ final class KeyboardViewController: UIInputViewController {
         settings.addRecentEmoji(item)
     }
 
-    /// Recently used first, then every group from EmojiData.swift.
+    /// Recently used first, then every group from EmojiData.swift, then combos.
+    /// The number of groups never changes (the category tabs are built once).
     private func currentEmojiGroups() -> [EmojiGroup] {
-        [EmojiGroup(title: "Recently used", tab: "🕘", isText: false, items: settings.recentEmoji)]
+        [EmojiGroup(title: "Recently used", tab: "🕘", kind: .emoji, items: settings.recentEmoji)]
             + EmojiData.groups
+            + [EmojiGroup(title: "My combos (hold one to delete)", tab: "⭐️", kind: .mine,
+                          items: [EmojiData.newComboItem] + settings.myCombos),
+               EmojiGroup(title: "Popular combos", tab: "✨", kind: .combos,
+                          items: EmojiData.popularCombos)]
     }
 
     // MARK: One-handed mode
@@ -2149,43 +2297,9 @@ final class KeyboardViewController: UIInputViewController {
         }
     }
 
-    /// The gear: opens the Keyboard Pro app's settings. Falls back to the
-    /// settings inside the keyboard when the app can't be opened, or when this
-    /// install has no shared storage (changes in the app wouldn't reach here).
     private func openSettings() {
-        guard KBSettings.sharedAvailable else {
-            showKeyboardSettings()
-            return
-        }
-        openContainingApp { [weak self] opened in
-            DispatchQueue.main.async {
-                if !opened { self?.showKeyboardSettings() }
-            }
-        }
-    }
-
-    private func showKeyboardSettings() {
         page = .settings
         buildKeyboard()
-    }
-
-    /// iOS has no public way for a keyboard to open its app, so this finds the
-    /// running UIApplication through the responder chain and asks it to open
-    /// keyboardpro://settings. Reports false if that isn't possible.
-    private func openContainingApp(_ done: @escaping (Bool) -> Void) {
-        guard let url = URL(string: "keyboardpro://settings") else {
-            done(false)
-            return
-        }
-        var responder: UIResponder? = self
-        while let current = responder {
-            if let application = current as? UIApplication {
-                application.open(url, options: [:], completionHandler: done)
-                return
-            }
-            responder = current.next
-        }
-        done(false)
     }
 
     private func closeSettings() {
@@ -2264,7 +2378,11 @@ extension KeyboardViewController: UICollectionViewDataSource, UICollectionViewDe
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "emoji", for: indexPath)
         let group = emojiGroups[indexPath.section]
         let item = group.items[indexPath.item]
-        (cell as? EmojiCell)?.show(item, isText: group.isText || Self.isCode(item))
+        if group.kind == .mine, indexPath.item == 0 {
+            (cell as? EmojiCell)?.showAddButton(item)
+        } else {
+            (cell as? EmojiCell)?.show(item, isCombo: Self.isCombo(item))
+        }
         return cell
     }
 
@@ -2286,19 +2404,36 @@ extension KeyboardViewController: UICollectionViewDataSource, UICollectionViewDe
     func collectionView(_ collectionView: UICollectionView,
                         layout collectionViewLayout: UICollectionViewLayout,
                         sizeForItemAt indexPath: IndexPath) -> CGSize {
-        let columns: CGFloat = collectionView.bounds.width > 500 ? 14 : 8
-        let side = max(floor(collectionView.bounds.width / columns), 30)
-        // WeChat text codes are wider: two emoji cells each.
+        let width = collectionView.bounds.width
+        let columns: CGFloat = width > 500 ? 14 : 8
+        let side = max(floor(width / columns), 30)
         let group = emojiGroups[indexPath.section]
-        let wide = group.isText || Self.isCode(group.items[indexPath.item])
-        return CGSize(width: wide ? side * 2 : side, height: 40)
+        let item = group.items[indexPath.item]
+        let isAdd = (group.kind == .mine && indexPath.item == 0)
+        guard isAdd || Self.isCombo(item) else { return CGSize(width: side, height: 40) }
+        // Combos take as many emoji cells as they need to fit, so the grid stays lined up.
+        let font = UIFont.systemFont(ofSize: isAdd ? 15 : EmojiCell.comboFontSize,
+                                     weight: isAdd ? .semibold : .regular)
+        let needed = (item as NSString).size(withAttributes: [.font: font]).width + 14
+        let cells = min(max(ceil(needed / side), 2), max(floor(width / side), 1))
+        return CGSize(width: cells * side, height: 40)
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         collectionView.deselectItem(at: indexPath, animated: false)
         feedback.keyDown()
-        let value = emojiGroups[indexPath.section].items[indexPath.item]
-        if pickingKeySide != nil {
+        let group = emojiGroups[indexPath.section]
+        let value = group.items[indexPath.item]
+        if group.kind == .mine, indexPath.item == 0 {
+            if pickingKeySide == nil, comboDraft == nil { startCombo() }
+            return
+        }
+        if comboToDelete != nil {
+            cancelBanner()                      // tapping elsewhere drops the question
+        } else if comboDraft != nil {
+            comboDraft = (comboDraft ?? "") + value   // building a combo: add to it
+            refreshEmojiBanner()
+        } else if pickingKeySide != nil {
             finishPicking(value)
         } else {
             proxy.insertText(value)
@@ -2306,9 +2441,10 @@ extension KeyboardViewController: UICollectionViewDataSource, UICollectionViewDe
         }
     }
 
-    /// WeChat text codes such as "[Facepalm]" (they can appear in Recently used).
-    static func isCode(_ item: String) -> Bool {
-        item.hasPrefix("[") && item.count > 2
+    /// More than one character: a combo such as "🔥🔥" or "ʕ•ᴥ•ʔ" (they can
+    /// also appear in Recently used). A single emoji, even 👨‍👩‍👧, is one character.
+    static func isCombo(_ item: String) -> Bool {
+        item.count > 1
     }
 
     /// Keeps the category tab in step with the group being looked at.

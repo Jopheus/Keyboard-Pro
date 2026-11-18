@@ -13,6 +13,7 @@
 
 import UIKit
 import AudioToolbox
+import AVFoundation
 
 /// Which key was pressed, so space, return and delete can sound different.
 enum KeySound: CaseIterable {
@@ -37,6 +38,7 @@ struct SoundPack {
 
     /// Every pack, in the order shown in settings.
     static let all: [SoundPack] = [
+        SoundPack(title: "Apple",      file: "Apple"),       // the iPhone's own key clicks
         SoundPack(title: "Cream",      file: "Cream"),       // NovelKeys Cream
         SoundPack(title: "Panda",      file: "Panda"),       // Holy Panda
         SoundPack(title: "Alpaca",     file: "Alpaca"),      // Alpaca
@@ -60,7 +62,8 @@ struct SoundPack {
 enum TapHaptic {
     /// (saved value, name) in the order shown in settings.
     static let choices: [(value: Int, title: String)] = [
-        (0, "Off"), (4, "Soft"), (1, "Light"), (2, "Medium"), (3, "Strong"), (5, "Crisp"),
+        (6, "Apple"), (0, "Off"), (4, "Soft"), (1, "Light"), (2, "Medium"), (3, "Strong"),
+        (5, "Crisp"),
     ]
 
     static func style(_ value: Int) -> (UIImpactFeedbackGenerator.FeedbackStyle, CGFloat)? {
@@ -70,6 +73,7 @@ enum TapHaptic {
         case 3:  return (.heavy, 1.0)
         case 4:  return (.soft, 0.7)
         case 5:  return (.rigid, 1.0)
+        case 6:  return (.light, 0.75)      // close to the iPhone keyboard's tap
         default: return nil
         }
     }
@@ -83,6 +87,8 @@ struct TacPreset {
     let haptic: Int         // TapHaptic value
 
     static let all: [TacPreset] = [
+        TacPreset(title: "Apple", summary: "The iPhone keyboard's own click and light tap.",
+                  pack: "Apple", haptic: 6),
         TacPreset(title: "Blue", summary: "Loud, sharp click with a crisp vibration.",
                   pack: "Clicky", haptic: 5),
         TacPreset(title: "Brown", summary: "Softer tactile bump.",
@@ -103,19 +109,25 @@ struct TacPreset {
 final class SwitchFeedback {
     static let shared = SwitchFeedback()
 
-    /// Recorded sounds for the current pack. Ordinary keys have several
-    /// takes; one is picked at random each press so typing sounds natural.
-    private var packSounds: [KeySound: [SystemSoundID]] = [:]
+    /// Recorded sounds for the current pack: for each key, its takes (one is
+    /// picked at random each press so typing sounds natural), and for each
+    /// take a few copies so fast typing can overlap without cutting off.
+    private var players: [KeySound: [[AVAudioPlayer]]] = [:]
+    /// The Apple preset uses iOS's own key sounds, which play at system volume.
+    private var systemSounds: [KeySound: SystemSoundID] = [:]
+    private var volume: Float = 1
 
     private var hapticStyle: UIImpactFeedbackGenerator.FeedbackStyle?
     private var hapticIntensity: CGFloat = 1
     private var generators: [Int: UIImpactFeedbackGenerator] = [:]
+    private var sessionReady = false
 
     // MARK: Public
 
-    /// Reloads the chosen sound and vibration. Call after settings change.
+    /// Reloads the chosen sound, volume and vibration. Call after settings change.
     func reload(_ settings: KBSettings) {
         dispose()
+        volume = Float(settings.soundVolume)
         let feel = settings.effectiveFeel       // presets only without Max
         if let (style, intensity) = TapHaptic.style(feel.haptic) {
             hapticStyle = style
@@ -128,8 +140,17 @@ final class SwitchFeedback {
 
     /// Call when a key goes down.
     func keyDown(_ key: KeySound = .generic) {
-        let takes = packSounds[key] ?? packSounds[.generic] ?? []
-        if let sound = takes.randomElement() { AudioServicesPlaySystemSound(sound) }
+        if volume > 0.001 {
+            if let sound = systemSounds[key] ?? systemSounds[.generic] {
+                AudioServicesPlaySystemSound(sound)
+            } else if let takes = players[key] ?? players[.generic],
+                      let copies = takes.randomElement(), let first = copies.first {
+                let player = copies.first(where: { !$0.isPlaying }) ?? first
+                player.currentTime = 0
+                player.volume = volume
+                player.play()
+            }
+        }
 
         if let style = hapticStyle {
             let generator = generators[style.rawValue] ?? UIImpactFeedbackGenerator(style: style)
@@ -139,29 +160,49 @@ final class SwitchFeedback {
         }
     }
 
-    // MARK: Recorded sounds
+    // MARK: Sounds
 
     /// Loads <pack>_press_generic_0…4 plus space / enter / backspace.
     /// A missing special key falls back to the ordinary key sound.
     private func loadPack(_ pack: String) {
+        // Apple: the sounds iOS itself plays for key presses (no files needed).
+        if pack == "Apple" {
+            systemSounds = [.generic: 1104, .delete: 1155, .space: 1156, .enter: 1156]
+            return
+        }
+        prepareSession()
         let bundle = Bundle(for: SwitchFeedback.self)
-        func sound(_ name: String) -> SystemSoundID? {
+        func take(_ name: String) -> [AVAudioPlayer]? {
             guard let url = bundle.url(forResource: name, withExtension: "caf") else { return nil }
-            var id: SystemSoundID = 0
-            guard AudioServicesCreateSystemSoundID(url as CFURL, &id) == noErr, id != 0 else { return nil }
-            return id
+            let copies = (0..<3).compactMap { _ -> AVAudioPlayer? in
+                guard let player = try? AVAudioPlayer(contentsOf: url) else { return nil }
+                player.prepareToPlay()
+                return player
+            }
+            return copies.isEmpty ? nil : copies
         }
         for key in KeySound.allCases {
             let base = "\(pack)_press_\(key.fileKey)"
             let takes = key == .generic
-                ? (0..<5).compactMap { sound("\(base)_\($0)") }
-                : [sound(base)].compactMap { $0 }
-            if !takes.isEmpty { packSounds[key] = takes }
+                ? (0..<5).compactMap { take("\(base)_\($0)") }
+                : [take(base)].compactMap { $0 }
+            if !takes.isEmpty { players[key] = takes }
         }
     }
 
+    /// Key sounds mix with music and follow the ring/silent switch, like the
+    /// system keyboard's clicks, instead of pausing whatever is playing.
+    private func prepareSession() {
+        guard !sessionReady else { return }
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
+        try? session.setActive(true)
+        sessionReady = true
+    }
+
     private func dispose() {
-        packSounds.values.joined().forEach { AudioServicesDisposeSystemSoundID($0) }
-        packSounds.removeAll()
+        players.values.joined().joined().forEach { $0.stop() }
+        players.removeAll()
+        systemSounds.removeAll()
     }
 }

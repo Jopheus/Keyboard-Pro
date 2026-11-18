@@ -1,7 +1,7 @@
 //
 //  EmojiData.swift
 //  Every Unicode emoji up to Emoji 17.0 (about 1914), grouped like Apple's
-//  emoji keyboard, plus WeChat's text codes. Generated from the emojibase data
+//  emoji keyboard, plus popular emoji combos. Generated from the emojibase data
 //  set; skin-tone variants are not included.
 //
 //  Each run is tagged with the oldest iOS that can draw it, so phones on older
@@ -13,23 +13,26 @@
 import Foundation
 
 struct EmojiGroup {
+    enum Kind {
+        case emoji      // single emoji
+        case combos     // ready-made combos such as ¯\_(ツ)_/¯
+        case mine       // combos the user made; the first cell is "+ New"
+    }
     let title: String
     let tab: String          // label on the category bar
-    let isText: Bool         // true = text codes such as "[Facepalm]"
+    let kind: Kind
     let items: [String]
 }
 
 struct EmojiSource {
     let title: String
     let tab: String
-    let isText: Bool
     let runs: [(Int, String)]
-    var extra: [String] = []
 }
 
 enum EmojiData {
 
-    /// The groups this iPhone can display, built once.
+    /// The single-emoji groups this iPhone can display, built once.
     static let groups: [EmojiGroup] = {
         let level = supportedLevel
         return sources.map { source in
@@ -37,11 +40,26 @@ enum EmojiData {
             for (needed, list) in source.runs where needed <= level {
                 items += list.split(separator: " ").map(String.init)
             }
-            items += source.extra
-            return EmojiGroup(title: source.title, tab: source.tab,
-                              isText: source.isText, items: items)
+            return EmojiGroup(title: source.title, tab: source.tab, kind: .emoji, items: items)
         }
     }()
+
+    /// The first cell of "My combos": tap it to make a new combo.
+    static let newComboItem = "＋ New"
+
+    /// Popular combos offered to everyone. Everything here draws on iOS 15.0.
+    static let popularCombos: [String] = [
+        // Text faces
+        "¯\\_(ツ)_/¯", "(╯°□°)╯︵ ┻━┻", "┬─┬ノ( º _ ºノ)", "( ͡° ͜ʖ ͡°)", "ಠ_ಠ",
+        "ʕ•ᴥ•ʔ", "(づ｡◕‿‿◕｡)づ", "(ﾉ◕ヮ◕)ﾉ*:･ﾟ✧", "༼ つ ◕_◕ ༽つ", "(｡♥‿♥｡)",
+        "(ಥ﹏ಥ)", "ᕦ(ò_óˇ)ᕤ", "(⌐■_■)", "(◕‿◕✿)", "(ᵔᴥᵔ)", "(☞ﾟヮﾟ)☞",
+        "(￣▽￣)ノ", "(≧◡≦)", "✌(◕‿-)✌", "(ง •̀_•́)ง", "(っ˘ڡ˘ς)", "(•‿•)",
+        // Emoji combos
+        "😂😂😂", "🔥🔥🔥", "💯🔥", "👀🍿", "😭🙏", "🙏✨", "💀💀💀", "👏👏👏",
+        "🥳🎉🎊", "🎂🎉🥳", "😍🥰😘", "🙈🙉🙊", "👉👈", "🚀🌕", "📈🚀", "💪😤",
+        "🤝💯", "✨🌸✨", "🌙✨", "😴💤", "💸💸💸", "🤔💭", "✅👍", "☕️📚",
+        "🍕🍺", "❤️❤️❤️", "🤣👌", "😎👍", "🙌🔥",
+    ]
 
     private static var supportedLevel: Int {
         let info = ProcessInfo.processInfo
@@ -58,7 +76,7 @@ enum EmojiData {
     }
 
     private static let sources: [EmojiSource] = [
-        EmojiSource(title: "Smileys & People", tab: "😀", isText: false, runs: [
+        EmojiSource(title: "Smileys & People", tab: "😀", runs: [
             (0, "😀 😃 😄 😁 😆 😅 🤣 😂 🙂 🙃"),
             (1, "🫠"),
             (0, "😉 😊 😇 🥰 😍 🤩 😘 😗 ☺️ 😚 😙 🥲 😋 😛 😜 🤪 😝 🤑 🤗 🤭"),
@@ -134,7 +152,7 @@ enum EmojiData {
             (0, "👣"),
             (4, "🫆"),
         ]),
-        EmojiSource(title: "Animals & Nature", tab: "🐻", isText: false, runs: [
+        EmojiSource(title: "Animals & Nature", tab: "🐻", runs: [
             (0, "🐵 🐒 🦍 🦧 🐶 🐕 🦮 🐕‍🦺 🐩 🐺 🦊 🦝 🐱 🐈 🐈‍⬛ 🦁 🐯 🐅 🐆 🐴"),
             (2, "🫎 🫏"),
             (0, "🐎 🦄 🦓 🦌 🦬 🐮 🐂 🐃 🐄 🐷 🐖 🐗 🐽 🐏 🐑 🐐 🐪 🐫 🦙 🦒 🐘 🦣 🦏 🦛 🐭 🐁 🐀 🐹 🐰 🐇 🐿️ 🦫 🦔 🦇 🐻 🐻‍❄️ 🐨 🐼 🦥 🦦 🦨 🦘 🦡 🐾 🦃 🐔 🐓 🐣 🐤 🐥 🐦 🐧 🕊️ 🦅 🦆 🦢 🦉 🦤 🪶 🦩 🦚 🦜"),
@@ -154,7 +172,7 @@ enum EmojiData {
             (0, "🍄"),
             (4, "🪾"),
         ]),
-        EmojiSource(title: "Food & Drink", tab: "🍔", isText: false, runs: [
+        EmojiSource(title: "Food & Drink", tab: "🍔", runs: [
             (0, "🍇 🍈 🍉 🍊 🍋"),
             (3, "🍋‍🟩"),
             (0, "🍌 🍍 🥭 🍎 🍏 🍐 🍑 🍒 🍓 🫐 🥝 🍅 🫒 🥥 🥑 🍆 🥔 🥕 🌽 🌶️ 🫑 🥒 🥬 🥦 🧄 🧅 🥜"),
@@ -169,12 +187,12 @@ enum EmojiData {
             (1, "🫙"),
             (0, "🏺"),
         ]),
-        EmojiSource(title: "Activity", tab: "⚽", isText: false, runs: [
+        EmojiSource(title: "Activity", tab: "⚽", runs: [
             (0, "🎃 🎄 🎆 🎇 🧨 ✨ 🎈 🎉 🎊 🎋 🎍 🎎 🎏 🎐 🎑 🧧 🎀 🎁 🎗️ 🎟️ 🎫 🎖️ 🏆 🏅 🥇 🥈 🥉 ⚽ ⚾ 🥎 🏀 🏐 🏈 🏉 🎾 🥏 🎳 🏏 🏑 🏒 🥍 🏓 🏸 🥊 🥋 🥅 ⛳ ⛸️ 🎣 🤿 🎽 🎿 🛷 🥌 🎯 🪀 🪁 🔫 🎱 🔮 🪄 🎮 🕹️ 🎰 🎲 🧩 🧸 🪅"),
             (1, "🪩"),
             (0, "🪆 ♠️ ♥️ ♦️ ♣️ ♟️ 🃏 🀄 🎴 🎭 🖼️ 🎨 🧵 🪡 🧶 🪢"),
         ]),
-        EmojiSource(title: "Travel & Places", tab: "🚗", isText: false, runs: [
+        EmojiSource(title: "Travel & Places", tab: "🚗", runs: [
             (0, "🌍 🌎 🌏 🌐 🗺️ 🗾 🧭 🏔️ ⛰️"),
             (5, "🛘"),
             (0, "🌋 🗻 🏕️ 🏖️ 🏜️ 🏝️ 🏞️ 🏟️ 🏛️ 🏗️ 🧱 🪨 🪵 🛖 🏘️ 🏚️ 🏠 🏡 🏢 🏣 🏤 🏥 🏦 🏨 🏩 🏪 🏫 🏬 🏭 🏯 🏰 💒 🗼 🗽 ⛪ 🕌 🛕 🕍 ⛩️ 🕋 ⛲ ⛺ 🌁 🌃 🏙️ 🌄 🌅 🌆 🌇 🌉 ♨️ 🎠"),
@@ -185,7 +203,7 @@ enum EmojiData {
             (1, "🛟"),
             (0, "⛵ 🛶 🚤 🛳️ ⛴️ 🛥️ 🚢 ✈️ 🛩️ 🛫 🛬 🪂 💺 🚁 🚟 🚠 🚡 🛰️ 🚀 🛸 🛎️ 🧳 ⌛ ⏳ ⌚ ⏰ ⏱️ ⏲️ 🕰️ 🕛 🕧 🕐 🕜 🕑 🕝 🕒 🕞 🕓 🕟 🕔 🕠 🕕 🕡 🕖 🕢 🕗 🕣 🕘 🕤 🕙 🕥 🕚 🕦 🌑 🌒 🌓 🌔 🌕 🌖 🌗 🌘 🌙 🌚 🌛 🌜 🌡️ ☀️ 🌝 🌞 🪐 ⭐ 🌟 🌠 🌌 ☁️ ⛅ ⛈️ 🌤️ 🌥️ 🌦️ 🌧️ 🌨️ 🌩️ 🌪️ 🌫️ 🌬️ 🌀 🌈 🌂 ☂️ ☔ ⛱️ ⚡ ❄️ ☃️ ⛄ ☄️ 🔥 💧 🌊"),
         ]),
-        EmojiSource(title: "Objects", tab: "💡", isText: false, runs: [
+        EmojiSource(title: "Objects", tab: "💡", runs: [
             (0, "👓 🕶️ 🥽 🥼 🦺 👔 👕 👖 🧣 🧤 🧥 🧦 👗 👘 🥻 🩱 🩲 🩳 👙 👚"),
             (2, "🪭"),
             (0, "👛 👜 👝 🛍️ 🎒 🩴 👞 👟 🥾 🥿 👠 👡 🩰 👢"),
@@ -214,7 +232,7 @@ enum EmojiData {
             (0, "🗿 🪧"),
             (1, "🪪"),
         ]),
-        EmojiSource(title: "Symbols", tab: "🔣", isText: false, runs: [
+        EmojiSource(title: "Symbols", tab: "🔣", runs: [
             (0, "🏧 🚮 🚰 ♿ 🚹 🚺 🚻 🚼 🚾 🛂 🛃 🛄 🛅 ⚠️ 🚸 ⛔ 🚫 🚳 🚭 🚯 🚱 🚷 📵 🔞 ☢️ ☣️ ⬆️ ↗️ ➡️ ↘️ ⬇️ ↙️ ⬅️ ↖️ ↕️ ↔️ ↩️ ↪️ ⤴️ ⤵️ 🔃 🔄 🔙 🔚 🔛 🔜 🔝 🛐 ⚛️ 🕉️ ✡️ ☸️ ☯️ ✝️ ☦️ ☪️ ☮️ 🕎 🔯"),
             (2, "🪯"),
             (0, "♈ ♉ ♊ ♋ ♌ ♍ ♎ ♏ ♐ ♑ ♒ ♓ ⛎ 🔀 🔁 🔂 ▶️ ⏩ ⏭️ ⏯️ ◀️ ⏪ ⏮️ 🔼 ⏫ 🔽 ⏬ ⏸️ ⏹️ ⏺️ ⏏️ 🎦 🔅 🔆 📶"),
@@ -225,13 +243,10 @@ enum EmojiData {
             (4, "🫟"),
             (0, "#️⃣ *️⃣ 0️⃣ 1️⃣ 2️⃣ 3️⃣ 4️⃣ 5️⃣ 6️⃣ 7️⃣ 8️⃣ 9️⃣ 🔟 🔠 🔡 🔢 🔣 🔤 🅰️ 🆎 🅱️ 🆑 🆒 🆓 ℹ️ 🆔 Ⓜ️ 🆕 🆖 🅾️ 🆗 🅿️ 🆘 🆙 🆚 🈁 🈂️ 🈷️ 🈶 🈯 🉐 🈹 🈚 🈲 🉑 🈸 🈴 🈳 ㊗️ ㊙️ 🈺 🈵 🔴 🟠 🟡 🟢 🔵 🟣 🟤 ⚫ ⚪ 🟥 🟧 🟨 🟩 🟦 🟪 🟫 ⬛ ⬜ ◼️ ◻️ ◾ ◽ ▪️ ▫️ 🔶 🔷 🔸 🔹 🔺 🔻 💠 🔘 🔳 🔲"),
         ]),
-        EmojiSource(title: "Flags", tab: "🏳️", isText: false, runs: [
+        EmojiSource(title: "Flags", tab: "🏳️", runs: [
             (0, "🏁 🚩 🎌 🏴 🏳️ 🏳️‍🌈 🏳️‍⚧️ 🏴‍☠️ 🇦🇨 🇦🇩 🇦🇪 🇦🇫 🇦🇬 🇦🇮 🇦🇱 🇦🇲 🇦🇴 🇦🇶 🇦🇷 🇦🇸 🇦🇹 🇦🇺 🇦🇼 🇦🇽 🇦🇿 🇧🇦 🇧🇧 🇧🇩 🇧🇪 🇧🇫 🇧🇬 🇧🇭 🇧🇮 🇧🇯 🇧🇱 🇧🇲 🇧🇳 🇧🇴 🇧🇶 🇧🇷 🇧🇸 🇧🇹 🇧🇻 🇧🇼 🇧🇾 🇧🇿 🇨🇦 🇨🇨 🇨🇩 🇨🇫 🇨🇬 🇨🇭 🇨🇮 🇨🇰 🇨🇱 🇨🇲 🇨🇳 🇨🇴 🇨🇵"),
             (4, "🇨🇶"),
             (0, "🇨🇷 🇨🇺 🇨🇻 🇨🇼 🇨🇽 🇨🇾 🇨🇿 🇩🇪 🇩🇬 🇩🇯 🇩🇰 🇩🇲 🇩🇴 🇩🇿 🇪🇦 🇪🇨 🇪🇪 🇪🇬 🇪🇭 🇪🇷 🇪🇸 🇪🇹 🇪🇺 🇫🇮 🇫🇯 🇫🇰 🇫🇲 🇫🇴 🇫🇷 🇬🇦 🇬🇧 🇬🇩 🇬🇪 🇬🇫 🇬🇬 🇬🇭 🇬🇮 🇬🇱 🇬🇲 🇬🇳 🇬🇵 🇬🇶 🇬🇷 🇬🇸 🇬🇹 🇬🇺 🇬🇼 🇬🇾 🇭🇰 🇭🇲 🇭🇳 🇭🇷 🇭🇹 🇭🇺 🇮🇨 🇮🇩 🇮🇪 🇮🇱 🇮🇲 🇮🇳 🇮🇴 🇮🇶 🇮🇷 🇮🇸 🇮🇹 🇯🇪 🇯🇲 🇯🇴 🇯🇵 🇰🇪 🇰🇬 🇰🇭 🇰🇮 🇰🇲 🇰🇳 🇰🇵 🇰🇷 🇰🇼 🇰🇾 🇰🇿 🇱🇦 🇱🇧 🇱🇨 🇱🇮 🇱🇰 🇱🇷 🇱🇸 🇱🇹 🇱🇺 🇱🇻 🇱🇾 🇲🇦 🇲🇨 🇲🇩 🇲🇪 🇲🇫 🇲🇬 🇲🇭 🇲🇰 🇲🇱 🇲🇲 🇲🇳 🇲🇴 🇲🇵 🇲🇶 🇲🇷 🇲🇸 🇲🇹 🇲🇺 🇲🇻 🇲🇼 🇲🇽 🇲🇾 🇲🇿 🇳🇦 🇳🇨 🇳🇪 🇳🇫 🇳🇬 🇳🇮 🇳🇱 🇳🇴 🇳🇵 🇳🇷 🇳🇺 🇳🇿 🇴🇲 🇵🇦 🇵🇪 🇵🇫 🇵🇬 🇵🇭 🇵🇰 🇵🇱 🇵🇲 🇵🇳 🇵🇷 🇵🇸 🇵🇹 🇵🇼 🇵🇾 🇶🇦 🇷🇪 🇷🇴 🇷🇸 🇷🇺 🇷🇼 🇸🇦 🇸🇧 🇸🇨 🇸🇩 🇸🇪 🇸🇬 🇸🇭 🇸🇮 🇸🇯 🇸🇰 🇸🇱 🇸🇲 🇸🇳 🇸🇴 🇸🇷 🇸🇸 🇸🇹 🇸🇻 🇸🇽 🇸🇾 🇸🇿 🇹🇦 🇹🇨 🇹🇩 🇹🇫 🇹🇬 🇹🇭 🇹🇯 🇹🇰 🇹🇱 🇹🇲 🇹🇳 🇹🇴 🇹🇷 🇹🇹 🇹🇻 🇹🇼 🇹🇿 🇺🇦 🇺🇬 🇺🇲 🇺🇳 🇺🇸 🇺🇾 🇺🇿 🇻🇦 🇻🇨 🇻🇪 🇻🇬 🇻🇮 🇻🇳 🇻🇺 🇼🇫 🇼🇸 🇽🇰 🇾🇪 🇾🇹 🇿🇦 🇿🇲 🇿🇼 🏴󠁧󠁢󠁥󠁮󠁧󠁿 🏴󠁧󠁢󠁳󠁣󠁴󠁿 🏴󠁧󠁢󠁷󠁬󠁳󠁿"),
         ]),
-        EmojiSource(title: "WeChat (works inside WeChat only)", tab: "💬", isText: true, runs: [
-            (0, "[Facepalm] [捂脸] [Aaagh!] [Angry] [Awesome] [Awkward] [Bah！R] [Bah！L] [Beckon] [Beer] [Blessing] [Blush] [Bomb] [Boring] [Broken] [BrokenHeart] [Bye] [Cake] [Chuckle] [Clap] [Cleaver] [Coffee] [Commando] [Concerned] [CoolGuy] [Cry] [Determined] [Dizzy] [Doge] [Drool] [Drowsy] [Duh] [Emm] [Fireworks] [Fist] [Flushed] [Frown] [Gift] [GoForIt] [Grimace] [Grin] [Hammer] [Happy] [Heart] [Hey] [Hug] [Hurt] [Joyful] [KeepFighting] [Kiss] [Laugh] [LetMeSee] [Lips] [Lol] [Moon] [MyBad] [NoProb] [NosePick] [OK] [OMG] [Onlooker] [Packet] [Panic] [Party] [Peace] [Pig] [Pooh-pooh] [Poop] [Puke] [Respect] [Rose] [Salute] [Scold] [Scowl] [Scream] [Shake] [Shhh] [Shocked] [Shrunken] [Shy] [Sick] [Sigh] [Silent] [Skull] [Sleep] [Slight] [Sly] [Smart] [Smile] [Smirk] [Smug] [Sob] [Speechless] [Sun] [Surprise] [Sweat] [Sweats] [TearingUp] [Terror] [ThumbsDown] [ThumbsUp] [Toasted] [Tongue] [Tremble] [Trick] [Twirl] [Watermelon] [Waddle] [Whimper] [Wilt] [Worship] [Wow] [Yawn] [Yeah!]"),
-        ], extra: ["[Let Down]"]),
     ]
 }
