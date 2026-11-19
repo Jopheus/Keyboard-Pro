@@ -14,14 +14,30 @@ targets:
   KeyboardPro:
     type: application
     platform: iOS
-    sources: [App]
+    sources:
+      - App
+      # The app shows the same settings as the keyboard, so it shares the
+      # settings model, the Tac Tile engine and the key sounds (for previews).
+      - Keyboard/Settings.swift
+      - Keyboard/Feedback.swift
+      - path: Keyboard/Sounds
+        buildPhase: resources
     scheme: {}
+    entitlements:
+      path: Supporting/App.entitlements
+      properties:
+        # Shared store so settings changed in the app reach the keyboard.
+        com.apple.security.application-groups: [group.com.example.keyboardpro]
     info:
       path: Supporting/App-Info.plist
       properties:
         CFBundleDisplayName: Keyboard Pro
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        # keyboardpro://settings — the keyboard's gear opens the app with this link.
+        CFBundleURLTypes:
+          - CFBundleURLName: com.example.keyboardpro
+            CFBundleURLSchemes: [keyboardpro]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.keyboardpro
@@ -33,6 +49,10 @@ targets:
     type: app-extension
     platform: iOS
     sources: [Keyboard]
+    entitlements:
+      path: Supporting/Keyboard.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.example.keyboardpro]
     info:
       path: Supporting/Keyboard-Info.plist
       properties:

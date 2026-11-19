@@ -13,7 +13,8 @@ struct Suggestion {
     var isPaste = false   // true = "paste the code I copied"
     var isEmoji = false   // true = an emoji for the word just typed
     var isShortcut = false // true = the user's text replacement ("omw" -> "On my way!")
-    var isCalc = false     // true = the answer to a sum typed before the cursor ("4+5" -> "9")
+    var isEmail = false    // true = a saved email address
+    var isCalc = false    // true = the answer to a sum typed before the cursor ("4+5" -> "9")
     var calcDelete = 0     // characters of the sum to replace with the answer
 }
 

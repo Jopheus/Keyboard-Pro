@@ -1,13 +1,68 @@
 //
 //  Settings.swift
-//  Everything the user can change, saved on the phone inside the keyboard.
+//  Everything the user can change, saved on the phone.
+//
+//  Used by both the keyboard and the Keyboard Pro app. They share one store
+//  (an "App Group") so a change made in the app shows up in the keyboard.
+//  If the App Group is not available (for example the app was installed
+//  without it), each side falls back to its own private store.
 //
 
 import UIKit
 
 final class KBSettings {
     static let shared = KBSettings()
-    private let d = UserDefaults.standard
+
+    /// Must match com.apple.security.application-groups in project.yml.
+    static let appGroup = "group.com.example.keyboardpro"
+
+    private let d: UserDefaults = {
+        let fm = FileManager.default
+        guard fm.containerURL(forSecurityApplicationGroupIdentifier: KBSettings.appGroup) != nil,
+              let group = UserDefaults(suiteName: KBSettings.appGroup) else { return .standard }
+        KBSettings.copyOldSettings(into: group)
+        return group
+    }()
+
+    /// True when the app and the keyboard share their settings.
+    var isShared: Bool { d !== UserDefaults.standard }
+
+    /// Every key stored here (used to move old settings into the shared store).
+    private static let allKeys = [
+        "longPressMs", "suggestionsOn", "autocorrectOn", "tapHaptic", "longHaptic", "theme",
+        "soundPack", "pasteCodesOn", "leftKey", "rightKey", "rowKey", "leftKeyShown",
+        "rightKeyShown", "rowKeyShown", "symbolMap", "historyOn", "heightScale", "showHints",
+        "oneHanded", "smartPunctuationOn", "showNumberRow", "soundVolume", "emojiSuggestionsOn",
+        "calculatorOn", "emailMemoryOn", "emailData", "adaptiveVariation", "adaptiveFast",
+        "adaptiveQuiet", "adaptiveNight", "nightFrom", "nightTo", "recentEmoji", "myCombos", "customWords", "maxUnlocked", "wechatRemoved",
+    ]
+
+    /// Settings saved before the shared store existed lived in this side's
+    /// private store. Copy them over once, without overwriting anything the
+    /// other side has already saved.
+    private static func copyOldSettings(into group: UserDefaults) {
+        let old = UserDefaults.standard
+        guard !old.bool(forKey: "copiedToAppGroup") else { return }
+        for key in allKeys where group.object(forKey: key) == nil {
+            if let value = old.object(forKey: key) { group.set(value, forKey: key) }
+        }
+        old.set(true, forKey: "copiedToAppGroup")
+    }
+
+    // MARK: Messages from the app to the keyboard
+
+    /// Goes up by one each time the app changes a setting, so the keyboard
+    /// knows to reload its look, sounds and size next time it appears.
+    var revision: Int {
+        get { int("revision", 0) }
+        set { d.set(newValue, forKey: "revision") }
+    }
+    /// Goes up by one when the user clears the typing history in the app.
+    /// The history file belongs to the keyboard, so the keyboard does the clearing.
+    var historyClearRequest: Int {
+        get { int("historyClearRequest", 0) }
+        set { d.set(newValue, forKey: "historyClearRequest") }
+    }
 
     /// Default long-press symbol for each letter.
     static let defaultSymbols: [String: String] = [
@@ -77,7 +132,8 @@ final class KBSettings {
                     "theme", "soundPack", "pasteCodesOn", "leftKey", "rightKey", "rowKey",
                     "leftKeyShown", "rightKeyShown", "rowKeyShown", "symbolMap", "historyOn",
                     "heightScale", "showHints", "oneHanded", "smartPunctuationOn", "showNumberRow", "soundVolume",
-                    "emojiSuggestionsOn", "calculatorOn"] {
+                    "emojiSuggestionsOn", "calculatorOn", "emailMemoryOn", "adaptiveVariation",
+                    "adaptiveFast", "adaptiveQuiet", "adaptiveNight", "nightFrom", "nightTo"] {
             d.removeObject(forKey: key)
         }
     }
@@ -172,7 +228,20 @@ final class KBSettings {
         get { bool("emojiSuggestionsOn", true) }
         set { d.set(newValue, forKey: "emojiSuggestionsOn") }
     }
-    /// Show the answer to a typed sum ("4+5" -> "= 9") in the suggestion bar.
+    /// Remember typed email addresses; hold the key left of space to pick one.
+    var emailMemoryOn: Bool {
+        get { bool("emailMemoryOn", true) }
+        set { d.set(newValue, forKey: "emailMemoryOn") }
+    }
+    /// The saved addresses (see EmailMemory).
+    var emailData: Data? {
+        get { d.data(forKey: "emailData") }
+        set {
+            if let newValue = newValue { d.set(newValue, forKey: "emailData") }
+            else { d.removeObject(forKey: "emailData") }
+        }
+    }
+    /// Show the answer to a typed sum ("4+5" -> "9") in the suggestion bar.
     var calculatorOn: Bool {
         get { bool("calculatorOn", true) }
         set { d.set(newValue, forKey: "calculatorOn") }
@@ -188,6 +257,39 @@ final class KBSettings {
         get { min(max(double("soundVolume", 1.0), 0), 1) }
         set { d.set(newValue, forKey: "soundVolume") }
     }
+
+    // MARK: Adaptive Tac Tile
+
+    /// Every press varies a little in volume, pitch and vibration, like a real switch.
+    var adaptiveVariation: Bool {
+        get { bool("adaptiveVariation", true) }
+        set { d.set(newValue, forKey: "adaptiveVariation") }
+    }
+    /// Max: fast typing gets quieter clicks and lighter vibration.
+    var adaptiveFast: Bool {
+        get { bool("adaptiveFast", true) }
+        set { d.set(newValue, forKey: "adaptiveFast") }
+    }
+    var effectiveAdaptiveFast: Bool { maxUnlocked && adaptiveFast }
+    /// No sound in password fields; lighter vibration in Low Power Mode.
+    var adaptiveQuiet: Bool {
+        get { bool("adaptiveQuiet", true) }
+        set { d.set(newValue, forKey: "adaptiveQuiet") }
+    }
+    /// Quieter clicks between nightFrom and nightTo (hours, 0…23).
+    var adaptiveNight: Bool {
+        get { bool("adaptiveNight", false) }
+        set { d.set(newValue, forKey: "adaptiveNight") }
+    }
+    var nightFrom: Int {
+        get { min(max(int("nightFrom", 22), 0), 23) }
+        set { d.set(newValue, forKey: "nightFrom") }
+    }
+    var nightTo: Int {
+        get { min(max(int("nightTo", 7), 0), 23) }
+        set { d.set(newValue, forKey: "nightTo") }
+    }
+
     var showNumberRow: Bool {
         get { bool("showNumberRow", true) }
         set { d.set(newValue, forKey: "showNumberRow") }

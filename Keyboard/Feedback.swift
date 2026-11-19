@@ -122,12 +122,33 @@ final class SwitchFeedback {
     private var generators: [Int: UIImpactFeedbackGenerator] = [:]
     private var sessionReady = false
 
+    // Adaptive Tac Tile (see Settings.swift): small changes to each press.
+    private var variation = true
+    private var fastSoften = false
+    private var autoQuiet = true
+    private var nightQuiet = false
+    private var nightFrom = 22
+    private var nightTo = 7
+    private var lastPress: TimeInterval = 0
+    private var nightCheckedAt: TimeInterval = 0
+    private var nightNow = false
+
+    /// Set by the keyboard: true while typing in a password field.
+    var secureField = false
+
     // MARK: Public
 
     /// Reloads the chosen sound, volume and vibration. Call after settings change.
     func reload(_ settings: KBSettings) {
         dispose()
         volume = Float(settings.soundVolume)
+        variation = settings.adaptiveVariation
+        fastSoften = settings.effectiveAdaptiveFast
+        autoQuiet = settings.adaptiveQuiet
+        nightQuiet = settings.adaptiveNight
+        nightFrom = settings.nightFrom
+        nightTo = settings.nightTo
+        nightCheckedAt = 0
         let feel = settings.effectiveFeel       // presets only without Max
         if let (style, intensity) = TapHaptic.style(feel.haptic) {
             hapticStyle = style
@@ -140,14 +161,47 @@ final class SwitchFeedback {
 
     /// Call when a key goes down.
     func keyDown(_ key: KeySound = .generic) {
-        if volume > 0.001 {
+        // How this press is adjusted: loudness and vibration strength (1 = as chosen).
+        var loudness: Float = 1
+        var strength: CGFloat = 1
+        var rate: Float = 1
+        var silent = false
+
+        let now = ProcessInfo.processInfo.systemUptime
+        let gap = now - lastPress
+        lastPress = now
+
+        // Auto-quiet: no sound in password fields, softer at night, lighter vibration in Low Power Mode.
+        if autoQuiet {
+            if secureField { silent = true; strength *= 0.6 }
+            if ProcessInfo.processInfo.isLowPowerModeEnabled { strength *= 0.6 }
+        }
+        if nightQuiet, isNight(now) { loudness *= 0.4; strength *= 0.7 }
+
+        // Fast typing: quicker than ~0.18 s between keys gets softer, down to 60%.
+        if fastSoften, gap < 0.18 {
+            let t = Float(max(gap, 0.06) - 0.06) / 0.12          // 0 (very fast) … 1
+            let soft = 0.6 + 0.4 * t
+            loudness *= soft
+            strength *= CGFloat(soft)
+        }
+
+        // Variation: no two presses are exactly the same.
+        if variation {
+            loudness *= Float.random(in: 0.92...1.08)
+            rate = Float.random(in: 0.97...1.03)
+            strength *= CGFloat.random(in: 0.9...1.1)
+        }
+
+        if volume > 0.001, !silent {
             if let sound = systemSounds[key] ?? systemSounds[.generic] {
                 AudioServicesPlaySystemSound(sound)
             } else if let takes = players[key] ?? players[.generic],
                       let copies = takes.randomElement(), let first = copies.first {
                 let player = copies.first(where: { !$0.isPlaying }) ?? first
                 player.currentTime = 0
-                player.volume = volume
+                player.volume = min(volume * loudness, 1)
+                if player.enableRate { player.rate = rate }
                 player.play()
             }
         }
@@ -155,9 +209,25 @@ final class SwitchFeedback {
         if let style = hapticStyle {
             let generator = generators[style.rawValue] ?? UIImpactFeedbackGenerator(style: style)
             generators[style.rawValue] = generator
-            generator.impactOccurred(intensity: hapticIntensity)
+            generator.impactOccurred(intensity: min(max(hapticIntensity * strength, 0.1), 1))
             generator.prepare()
         }
+    }
+
+    /// True inside the chosen night hours. Checked at most once a minute.
+    private func isNight(_ now: TimeInterval) -> Bool {
+        if now - nightCheckedAt > 60 || nightCheckedAt == 0 {
+            nightCheckedAt = now
+            let hour = Calendar.current.component(.hour, from: Date())
+            if nightFrom == nightTo {
+                nightNow = false
+            } else if nightFrom < nightTo {
+                nightNow = hour >= nightFrom && hour < nightTo
+            } else {
+                nightNow = hour >= nightFrom || hour < nightTo      // past midnight
+            }
+        }
+        return nightNow
     }
 
     // MARK: Sounds
@@ -176,6 +246,7 @@ final class SwitchFeedback {
             guard let url = bundle.url(forResource: name, withExtension: "caf") else { return nil }
             let copies = (0..<3).compactMap { _ -> AVAudioPlayer? in
                 guard let player = try? AVAudioPlayer(contentsOf: url) else { return nil }
+                player.enableRate = true        // lets each press vary slightly in pitch
                 player.prepareToPlay()
                 return player
             }

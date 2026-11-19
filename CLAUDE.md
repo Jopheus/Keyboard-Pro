@@ -25,7 +25,12 @@ Android keyboard — long-press any letter to type a symbol — plus "Tac Tile" 
 - `Keyboard/Feedback.swift`: sound and haptic engine ("Tac Tile")
 - `Keyboard/Suggestions.swift`: autocomplete/suggestions. `Keyboard/EmojiData.swift`, `EmojiNames.swift`: emoji
 - `Keyboard/Sounds/<Profile>/<Profile>_press_{generic_0-4,space,enter,backspace}.caf`: switch sounds
-- `App/KeyboardProApp.swift`: host app (setup instructions and a test field)
+- `App/KeyboardProApp.swift`: host app home screen (setup steps, settings menu, test field)
+- `App/SettingsViews.swift`: the keyboard's settings as SwiftUI screens in the app. The app target
+  also compiles `Keyboard/Settings.swift`, `Keyboard/Feedback.swift` and bundles `Keyboard/Sounds`.
+- Settings are shared through the App Group `group.com.example.keyboardpro` (entitlements in
+  `project.yml`; the workflow ad-hoc signs with them). The app bumps `KBSettings.revision` on each
+  change; the keyboard reloads theme/sound/height in `viewWillAppear` when it sees a new revision.
 - `Design/`: app icon SVGs and `make_icon.py`. `ThirdParty/kbsim-LICENSE.md`: sound licence
 - `.backup-*`: old snapshots. Ignore them and don't edit them.
 
@@ -50,5 +55,6 @@ Android keyboard — long-press any letter to type a symbol — plus "Tac Tile" 
 
 ## Product direction
 - All keyboard settings should live in the Keyboard Pro app. The keyboard's gear icon should open the app.
-  The current code still has an in-keyboard `SettingsPanel` and the host app says the gear opens it,
-  so this move is still to do.
+  Done: the app shows every setting, and the gear opens the app via `keyboardpro://settings`
+  (`openHostApp()` in `KeyboardViewController.swift`, responder-chain trick). The in-keyboard
+  `SettingsPanel` is now only a fallback if opening the app fails; keep it in sync or retire it later.

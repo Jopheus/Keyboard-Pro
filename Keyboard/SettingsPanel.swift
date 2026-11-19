@@ -4,8 +4,8 @@
 //
 //  - A short main menu (Appearance, Typing, Tac Tile, Action Keys) with one
 //    page each. The title and its Done / Back button stay pinned on top.
-//  - Appearance, Typing and Tac Tile show a strip of sample keys under the
-//    title so changes can be seen, heard and felt straight away.
+//  - Tac Tile shows a strip of sample keys under the title so sound and
+//    vibration changes can be heard and felt straight away.
 //  - Going back returns to where the previous page was scrolled.
 //  - Max features sit with the settings they belong to, marked MAX, and are
 //    greyed out until Max is unlocked.
@@ -60,12 +60,10 @@ final class SettingsPanel: UIView {
             }
         }
 
-        /// Pages that show the sample keys.
+        /// Only the Tac Tile page shows the sample keys.
         var showsPreview: Bool {
-            switch self {
-            case .appearance, .typing, .tacTile: return true
-            default:                             return false
-            }
+            if case .tacTile = self { return true }
+            return false
         }
     }
 
@@ -256,9 +254,7 @@ final class SettingsPanel: UIView {
             ])
             previewBar.addArrangedSubview(key)
         }
-        let hint = note("Try it: tap or hold a key")
-        hint.numberOfLines = 2
-        previewBar.addArrangedSubview(hint)
+        previewBar.addArrangedSubview(UIView())     // keeps the keys to the left
     }
 
     private func previewDown(_ key: KeyButton, _ sound: KeySound) {
@@ -377,6 +373,13 @@ final class SettingsPanel: UIView {
         add(row("Calculator (4+5 shows 9)", toggle(settings.calculatorOn) { [weak self] in
             self?.settings.calculatorOn = $0
         }))
+        add(row("Remember emails (hold key left of space)", toggle(settings.emailMemoryOn) { [weak self] in
+            self?.settings.emailMemoryOn = $0
+        }))
+        add(row("Saved emails",
+                confirmButton("Clear", confirm: "Tap again to clear", done: "Cleared") {
+                    EmailMemory.clear()
+                }))
         add(row("Smart punctuation", toggle(settings.smartPunctuationOn) { [weak self] in
             self?.settings.smartPunctuationOn = $0
         }))
@@ -512,6 +515,25 @@ final class SettingsPanel: UIView {
                 changed()
             }, !isMax)
         }, perRow: 3)
+
+        // Adaptive Tac Tile (night hours are set in the Keyboard Pro app).
+        add(header("Adaptive"))
+        add(row("Natural variation", toggle(settings.adaptiveVariation) { [weak self] in
+            self?.settings.adaptiveVariation = $0
+            self?.onFeedbackChanged?()
+        }))
+        add(row("Auto-quiet (passwords, Low Power)", toggle(settings.adaptiveQuiet) { [weak self] in
+            self?.settings.adaptiveQuiet = $0
+            self?.onFeedbackChanged?()
+        }))
+        add(row("Quieter at night", toggle(settings.adaptiveNight) { [weak self] in
+            self?.settings.adaptiveNight = $0
+            self?.onFeedbackChanged?()
+        }))
+        add(row("Soften when typing fast", toggle(settings.adaptiveFast, enabled: isMax) { [weak self] in
+            self?.settings.adaptiveFast = $0
+            self?.onFeedbackChanged?()
+        }, badge: true, dimmed: !isMax))
     }
 
     // MARK: Action Keys (left of space, right of space, right of the suggestion bar)

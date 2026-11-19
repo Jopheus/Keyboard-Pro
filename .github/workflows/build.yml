@@ -32,6 +32,18 @@ jobs:
             -archivePath build/KeyboardPro.xcarchive \
             CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
 
+      # The unsigned build carries no entitlements. Ad-hoc sign the keyboard,
+      # then the app, with their App Group entitlement so the sideloading tool
+      # that re-signs the IPA sets up the shared settings store.
+      - name: Add App Group entitlements (ad-hoc sign)
+        run: |
+          APP=build/KeyboardPro.xcarchive/Products/Applications/KeyboardPro.app
+          for EXT in "$APP"/PlugIns/*.appex; do
+            codesign -f -s - --entitlements Supporting/Keyboard.entitlements "$EXT"
+          done
+          codesign -f -s - --entitlements Supporting/App.entitlements "$APP"
+          codesign -d --entitlements - "$APP"
+
       - name: Package IPA
         run: |
           mkdir -p Payload

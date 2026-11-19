@@ -15,7 +15,8 @@
 //  - Web and email fields: / or @ beside space, hold . for .com .net …
 //  - Hold shift to turn on caps lock (or double-tap it)
 //  - Suggestion bar: word completion, auto-correct, add words, paste copied code
-//  - Settings (gear button): theme, switch sound + vibration, Max options
+//  - Settings (gear button): opens the Keyboard Pro app, where every setting
+//    lives. The in-keyboard SettingsPanel is only a fallback if that fails.
 //  - Glass theme: frosted Liquid Glass keys on iOS 26 (follows the iPhone's
 //    Clear / Tinted setting), frosted blur keys on older iOS
 //  - Key preview popup, shift / caps lock (double-tap), hold-to-delete,
@@ -96,6 +97,9 @@ final class KeyButton: UIControl {
     /// Long-press choices that replace the letter's symbol and accents
     /// (the .com .net … endings on the full stop in web fields).
     var choices: [String] = []
+
+    /// True for the key left of the space bar: holding it opens the saved emails.
+    var holdsEmails = false
 
     /// Blue key with white text (the return key for Go, Search, Send …).
     var isAccent = false { didSet { updateColor() } }
@@ -546,6 +550,10 @@ final class KeyboardViewController: UIInputViewController {
     private var settingsStart = SettingsPanel.Start.main
 
     private var settingsPanel: SettingsPanel?
+    private var emailPanel: EmailPanel?
+    /// An address just typed from the list or the bar; already counted, so
+    /// the space or return after it must not count it again.
+    private var lastPickedEmail: String?
     private let suggestionBar = UIStackView()
     private var suggestionButtons: [UIButton] = []
     private var suggestions: [Suggestion] = []
@@ -669,6 +677,7 @@ final class KeyboardViewController: UIInputViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        feedback.secureField = proxy.isSecureTextEntry ?? false
         // Decimal / punctuation number fields open on the symbol page.
         let type = proxy.keyboardType ?? .default
         let numeric = (type == .decimalPad || type == .numbersAndPunctuation)
@@ -681,7 +690,8 @@ final class KeyboardViewController: UIInputViewController {
         typedSymbol = false
         manualShift = false
         loadLexicon()                           // picks up new text replacements
-        if wasSearching || builtPage != page || builtWithGlobe != needsInputModeSwitchKey
+        let changedInApp = applyChangesFromApp()
+        if changedInApp || wasSearching || builtPage != page || builtWithGlobe != needsInputModeSwitchKey
             || builtFieldKind != fieldKind {
             buildKeyboard()
         }
@@ -711,7 +721,13 @@ final class KeyboardViewController: UIInputViewController {
         engine.save()
     }
 
+    override func textWillChange(_ textInput: UITextInput?) {
+        super.textWillChange(textInput)
+        feedback.secureField = proxy.isSecureTextEntry ?? false
+    }
+
     override func textDidChange(_ textInput: UITextInput?) {
+        feedback.secureField = proxy.isSecureTextEntry ?? false
         // Moving to a web or email field changes the keys beside the space bar.
         if fieldKind != builtFieldKind, page == .letters || page == .symbols || page == .more {
             buildKeyboard()
@@ -741,6 +757,7 @@ final class KeyboardViewController: UIInputViewController {
 
     private func buildKeyboard() {
         cancelTouches()
+        hideEmailPanel(refresh: false)
         builtPage = page
         builtWithGlobe = needsInputModeSwitchKey
 
@@ -881,7 +898,11 @@ final class KeyboardViewController: UIInputViewController {
             bottom.append(globeKey)
         }
 
-        if leftShown { bottom.append(shortcutKey(leftText)) }
+        if leftShown {
+            let leftKey = shortcutKey(leftText)
+            leftKey.holdsEmails = true
+            bottom.append(leftKey)
+        }
 
         let space = KeyButton(kind: .space, title: "space")
         register(space)
@@ -1300,7 +1321,16 @@ final class KeyboardViewController: UIInputViewController {
             longPressFired = false
             if key.kind == .char { showPopup(key.output, over: key) }
             let choices = longPressChoices(for: key)
-            if !choices.isEmpty {
+            if key.holdsEmails, key.kind == .char, settings.emailMemoryOn {
+                // Holding the key left of space opens the saved emails (nothing is typed).
+                let timer = Timer(timeInterval: settings.longPressMs / 1000, repeats: false) { [weak self, weak key] _ in
+                    guard let self = self, let key = key, key === self.pendingKey else { return }
+                    Haptics.play(self.settings.longHaptic)
+                    self.showEmailPanel()
+                }
+                RunLoop.main.add(timer, forMode: .common)
+                longPressTimer = timer
+            } else if !choices.isEmpty {
                 let delay = settings.longPressMs / 1000
                 let timer = Timer(timeInterval: delay, repeats: false) { [weak self, weak key] _ in
                     guard let self = self, let key = key, key === self.pendingKey else { return }
@@ -1379,6 +1409,7 @@ final class KeyboardViewController: UIInputViewController {
                 endEmojiSearch()
                 return
             }
+            rememberEmail()
             proxy.insertText("\n")
             lastCorrection = nil
             manualShift = false
@@ -1517,6 +1548,7 @@ final class KeyboardViewController: UIInputViewController {
             updateSearchResults()
             return
         }
+        rememberEmail()
         let now = Date()
         let before = proxy.documentContextBeforeInput ?? ""
         let fieldType = proxy.keyboardType ?? .default
@@ -1668,7 +1700,7 @@ final class KeyboardViewController: UIInputViewController {
                       for: .normal)
         gear.tintColor = .secondaryLabel
         gear.accessibilityLabel = "Keyboard settings"
-        gear.addAction(UIAction { [weak self] _ in self?.openSettings() }, for: .touchUpInside)
+        gear.addAction(UIAction { [weak self] _ in self?.openHostApp() }, for: .touchUpInside)
         suggestionBar.addArrangedSubview(gear)
 
         // Three slots with thin dividers; the middle one (best guess) is bold.
@@ -1752,6 +1784,18 @@ final class KeyboardViewController: UIInputViewController {
                                    isCalc: true, calcDelete: answer.deleteCount))
         }
 
+        // Saved email addresses: always in email fields; elsewhere after typing "@".
+        var emailToken = ""
+        if settings.emailMemoryOn {
+            emailToken = currentToken()
+            if fieldKind == 2 || emailToken.contains("@") {
+                let prefix = emailToken == "@" ? "" : emailToken
+                for email in EmailMemory.matching(prefix: prefix, limit: 3) {
+                    list.append(Suggestion(title: email, text: email, isAdd: false, isEmail: true))
+                }
+            }
+        }
+
         if settings.suggestionsOn {
             let context = wordContext()
             let custom = knownWords
@@ -1762,6 +1806,7 @@ final class KeyboardViewController: UIInputViewController {
             }
             // Unknown word: offer to add it to the dictionary.
             if context.word.count >= 2, context.word.allSatisfy({ $0.isLetter }),
+               fieldKind != 2, !token.contains("@"),
                !engine.isKnown(context.word, custom: custom) {
                 list.append(Suggestion(title: "+ " + context.word, text: context.word, isAdd: true))
             }
@@ -1811,6 +1856,11 @@ final class KeyboardViewController: UIInputViewController {
             // Replaces the sum with its answer: "4+5" -> "9".
             for _ in 0..<choice.calcDelete { proxy.deleteBackward() }
             proxy.insertText(choice.text)
+            afterSuggestion()
+            return
+        }
+        if choice.isEmail {
+            insertEmail(choice.text)
             afterSuggestion()
             return
         }
@@ -2297,6 +2347,55 @@ final class KeyboardViewController: UIInputViewController {
         }
     }
 
+    /// Settings can be changed in the Keyboard Pro app while the keyboard is
+    /// hidden. Reloads the look, sound and size if they changed, and clears the
+    /// typing history if the app asked for it. Returns true if anything changed.
+    private func applyChangesFromApp() -> Bool {
+        let seen = UserDefaults.standard
+        var changed = false
+        if settings.revision != seen.integer(forKey: "seenRevision") {
+            seen.set(settings.revision, forKey: "seenRevision")
+            applyTheme()
+            feedback.reload(settings)
+            applyMetrics(landscape: isLandscape ?? false)
+            changed = true
+        }
+        if settings.historyClearRequest != seen.integer(forKey: "seenHistoryClear") {
+            seen.set(settings.historyClearRequest, forKey: "seenHistoryClear")
+            engine.clearHistory()
+        }
+        return changed
+    }
+
+    /// The gear: opens the Keyboard Pro app on its settings.
+    ///
+    /// Apple gives keyboards no normal way to open an app, so this finds the
+    /// UIApplication object through the responder chain and calls its
+    /// open-URL method by name (calling it directly is not allowed in an
+    /// extension and would not compile). If that fails, the settings open
+    /// inside the keyboard instead, as before.
+    private func openHostApp() {
+        guard let url = URL(string: "keyboardpro://settings") else { return openSettings() }
+        let selector = NSSelectorFromString("openURL:options:completionHandler:")
+        var responder: UIResponder? = self
+        while let current = responder {
+            if current is UIApplication, current.responds(to: selector) {
+                typealias OpenURL = @convention(c) (
+                    AnyObject, Selector, NSURL, NSDictionary, (@convention(block) (Bool) -> Void)?
+                ) -> Void
+                let open = unsafeBitCast(current.method(for: selector), to: OpenURL.self)
+                let done: @convention(block) (Bool) -> Void = { [weak self] opened in
+                    if !opened { DispatchQueue.main.async { self?.openSettings() } }
+                }
+                open(current, selector, url as NSURL, NSDictionary(), done)
+                return
+            }
+            responder = current.next
+        }
+        openSettings()
+    }
+
+    /// The settings panel inside the keyboard (fallback when the app can't be opened).
     private func openSettings() {
         page = .settings
         buildKeyboard()
@@ -2340,6 +2439,74 @@ final class KeyboardViewController: UIInputViewController {
             panel.bottomAnchor.constraint(equalTo: surface.bottomAnchor, constant: -4),
         ])
         settingsPanel = panel
+        return panel
+    }
+
+    // MARK: Email memory
+
+    /// Saves the email address just typed (called on space and return).
+    private func rememberEmail() {
+        let picked = lastPickedEmail
+        lastPickedEmail = nil
+        guard settings.emailMemoryOn, !(proxy.isSecureTextEntry ?? false),
+              let email = EmailMemory.extract(fromToken: currentToken()),
+              email != picked else { return }
+        EmailMemory.record(email)
+    }
+
+    /// Types a saved address, replacing the start of it if that was already typed.
+    private func insertEmail(_ email: String) {
+        let token = currentToken()
+        if !token.isEmpty, token == "@" || email.hasPrefix(token.lowercased()) {
+            for _ in 0..<token.count { proxy.deleteBackward() }
+        } else if !token.isEmpty {
+            proxy.insertText(" ")               // keep it apart from the word before
+        }
+        proxy.insertText(email)
+        EmailMemory.record(email)
+        lastPickedEmail = email
+        lastCorrection = nil
+        manualShift = false
+        updateAutoShift()
+    }
+
+    private func showEmailPanel() {
+        cancelTouches()
+        let panel = emailPanel ?? makeEmailPanel()
+        panel.reload()
+        panel.isHidden = false
+        rowsStack.isHidden = true
+        suggestionBar.isHidden = true
+        surface.passthroughs = [panel]
+    }
+
+    private func hideEmailPanel(refresh: Bool = true) {
+        guard let panel = emailPanel, !panel.isHidden else { return }
+        panel.isHidden = true
+        rowsStack.isHidden = false
+        suggestionBar.isHidden = false
+        surface.passthroughs = [suggestionBar, searchBar, sidePanel]
+        if refresh { refreshSuggestions() }
+    }
+
+    private func makeEmailPanel() -> EmailPanel {
+        let panel = EmailPanel()
+        panel.isHidden = true
+        panel.onClose = { [weak self] in self?.hideEmailPanel() }
+        panel.onPick = { [weak self] email in
+            guard let self = self else { return }
+            self.feedback.keyDown()
+            self.insertEmail(email)
+            self.hideEmailPanel()
+        }
+        surface.addSubview(panel)
+        NSLayoutConstraint.activate([
+            panel.leadingAnchor.constraint(equalTo: surface.leadingAnchor, constant: 3),
+            panel.trailingAnchor.constraint(equalTo: surface.trailingAnchor, constant: -3),
+            panel.topAnchor.constraint(equalTo: surface.topAnchor, constant: 6),
+            panel.bottomAnchor.constraint(equalTo: surface.bottomAnchor, constant: -4),
+        ])
+        emailPanel = panel
         return panel
     }
 
