@@ -22,8 +22,12 @@ struct ContentView: View {
                     Section {
                         Label("Settings can't reach the keyboard", systemImage: "exclamationmark.triangle.fill")
                             .foregroundColor(.orange)
-                        Text("This copy of the app was installed without its App Group, so changes made here stay in the app. Use the gear on the keyboard instead, or reinstall with a tool that keeps App Groups.")
+                        Text("This copy of the app was installed without its App Group, so changes made here stay in the app. Reinstall with a tool that keeps App Groups.")
                             .font(.footnote)
+                        Text(KBSettings.groupReport)
+                            .font(.caption.monospaced())
+                            .foregroundColor(.secondary)
+                            .textSelection(.enabled)
                     }
                 }
 

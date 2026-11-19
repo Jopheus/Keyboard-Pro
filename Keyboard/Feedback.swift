@@ -73,7 +73,7 @@ enum TapHaptic {
         case 3:  return (.heavy, 1.0)
         case 4:  return (.soft, 0.7)
         case 5:  return (.rigid, 1.0)
-        case 6:  return (.light, 0.75)      // close to the iPhone keyboard's tap
+        case 6:  return (.medium, 0.8)      // close to the iPhone keyboard's tap
         default: return nil
         }
     }

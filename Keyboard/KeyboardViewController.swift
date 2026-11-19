@@ -870,11 +870,25 @@ final class KeyboardViewController: UIInputViewController {
         let del = KeyButton(kind: .delete, icon: "delete.left", function: true)
         let middle = rows[2].map { makeCharKey($0) }
         middle.forEach { width($0, 0.1) }
-        width(left, 0.15)
-        width(del, 0.15)
+        // Like Apple's keyboard: shift and delete are about 1.3 letter keys wide and
+        // sit at the edges, with a slightly wider gap before the letters. The two
+        // gaps make the row exactly as wide as the rows above.
+        width(left, 0.13)
+        width(del, 0.13)
+        func gap() -> UIView {
+            let spacer = UIView()
+            spacer.isUserInteractionEnabled = false
+            widths.append(spacer.widthAnchor.constraint(equalTo: rowsStack.widthAnchor,
+                                                        multiplier: 0.02, constant: -3))
+            return spacer
+        }
         register(left)
         register(del)
-        addRow([left] + middle + [del], fill: false)
+        var thirdRow: [UIView] = [left, gap()]
+        thirdRow.append(contentsOf: middle.map { $0 as UIView })
+        thirdRow.append(gap())
+        thirdRow.append(del)
+        addRow(thirdRow, fill: false)
 
         // Bottom row: ?123 / ABC, emoji, (globe), left key, space, right key, return
         var bottom: [KeyButton] = []

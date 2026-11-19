@@ -16,10 +16,56 @@ final class KBSettings {
     /// Must match com.apple.security.application-groups in project.yml.
     static let appGroup = "group.com.example.keyboardpro"
 
-    private let d: UserDefaults = {
+    /// The App Group this install can really use, or nil if it has none.
+    ///
+    /// Sideloading tools (AltStore, SideStore, Sideloadly …) re-sign the app
+    /// with the user's Apple ID and usually rename the group, for example to
+    /// "group.com.example.keyboardpro.ABCDE12345". So besides the name above,
+    /// this also tries the groups listed in the install's provisioning profile
+    /// and in AltStore's ALTAppGroups key. The app and the keyboard each read
+    /// their own profile and pick by the same rule, so they land on the same group.
+    static let resolvedGroup: String? = {
         let fm = FileManager.default
-        guard fm.containerURL(forSecurityApplicationGroupIdentifier: KBSettings.appGroup) != nil,
-              let group = UserDefaults(suiteName: KBSettings.appGroup) else { return .standard }
+        return groupCandidates.first {
+            fm.containerURL(forSecurityApplicationGroupIdentifier: $0) != nil
+        }
+    }()
+
+    /// Groups to try, best match first.
+    private static var groupCandidates: [String] {
+        var found = profileGroups
+        found += (Bundle.main.object(forInfoDictionaryKey: "ALTAppGroups") as? [String]) ?? []
+        let others = Array(Set(found.filter { $0 != appGroup })).sorted()
+        return [appGroup]
+            + others.filter { $0.hasPrefix(appGroup) }
+            + others.filter { !$0.hasPrefix(appGroup) && $0.lowercased().contains("keyboardpro") }
+            + others.filter { !$0.lowercased().contains("keyboardpro") }
+    }
+
+    /// The App Groups granted in embedded.mobileprovision (the signing profile
+    /// the installer put inside the app). Empty if there is no profile.
+    static let profileGroups: [String] = {
+        guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
+              let data = try? Data(contentsOf: url),
+              let start = data.range(of: Data("<?xml".utf8)),
+              let end = data.range(of: Data("</plist>".utf8), in: start.lowerBound..<data.endIndex),
+              let plist = try? PropertyListSerialization.propertyList(
+                  from: data.subdata(in: start.lowerBound..<end.upperBound), format: nil) as? [String: Any],
+              let entitlements = plist["Entitlements"] as? [String: Any] else { return [] }
+        return entitlements["com.apple.security.application-groups"] as? [String] ?? []
+    }()
+
+    /// What was found, for the warning in the app when settings can't be shared.
+    static var groupReport: String {
+        let profile = profileGroups.isEmpty ? "none" : profileGroups.joined(separator: ", ")
+        let hasProfile = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision") != nil
+        return "Looking for: \(appGroup)\nApp Groups in this install: \(profile)"
+            + (hasProfile ? "" : " (no signing profile found)")
+    }
+
+    private let d: UserDefaults = {
+        guard let name = KBSettings.resolvedGroup,
+              let group = UserDefaults(suiteName: name) else { return .standard }
         KBSettings.copyOldSettings(into: group)
         return group
     }()
@@ -106,7 +152,7 @@ final class KBSettings {
     /// Vibration when typing: 0 off, 1 light, 2 medium, 3 strong, 4 soft, 5 crisp
     /// (see TapHaptic). Long press uses 0…3 only.
     var tapHaptic: Int {
-        get { int("tapHaptic", 6) }        // Apple preset
+        get { int("tapHaptic", 2) }        // Brown preset
         set { d.set(newValue, forKey: "tapHaptic") }
     }
     var longHaptic: Int {
@@ -118,9 +164,9 @@ final class KBSettings {
         get { int("theme", 3) }
         set { d.set(newValue, forKey: "theme") }
     }
-    /// Tac Tile sound pack (file prefix, see SoundPack.all). Default: the Apple preset.
+    /// Tac Tile sound pack (file prefix, see SoundPack.all). Default: the Brown preset.
     var soundPack: String {
-        get { SoundPack.named(d.string(forKey: "soundPack") ?? "Apple").file }
+        get { SoundPack.named(d.string(forKey: "soundPack") ?? "Typewriter").file }
         set { d.set(newValue, forKey: "soundPack") }
     }
     static let themeNames = ["Auto", "Light", "Dark", "Glass"]
@@ -376,14 +422,14 @@ final class KBSettings {
         maxUnlocked ? CGFloat(heightScale) : 1
     }
     /// The Tac Tile sound and vibration in use. Without Max only the four
-    /// presets are available, so any other mix falls back to the Apple preset.
+    /// presets are available, so any other mix falls back to the Brown preset.
     var effectiveFeel: (pack: String, haptic: Int) {
         let pack = soundPack
         let haptic = tapHaptic
         if maxUnlocked || TacPreset.all.contains(where: { $0.pack == pack && $0.haptic == haptic }) {
             return (pack, haptic)
         }
-        let fallback = TacPreset.all[0]           // Apple
+        let fallback = TacPreset.all.first { $0.title == "Brown" } ?? TacPreset.all[0]
         return (fallback.pack, fallback.haptic)
     }
     var effectiveHistory: Bool {
