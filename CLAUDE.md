@@ -46,6 +46,10 @@ Android keyboard — long-press any letter to type a symbol — plus "Tac Tile" 
 - The comma and full-stop keys are removed. An emoji key is on the bottom row.
 - Long-press any letter to type its symbol.
 
+## App design and styling 
+- Follow ios design language as closely as possible. The design should make no different from IOS build in apps.
+- Apply to app icon, app store screenshot
+
 ## Tac Tile sound engine
 - Switch sound profiles plus haptics. Profiles: Blue = Clicky, Brown = Typewriter, Red = Cream,
   Tofu = Tofu ("Almost soundless, light vibration"), plus Custom.

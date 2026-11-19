@@ -101,6 +101,33 @@ final class KeyButton: UIControl {
     /// True for the key left of the space bar: holding it opens the saved emails.
     var holdsEmails = false
 
+    private var emailBadge: UIImageView?
+
+    /// A small, quiet envelope in the corner of the key: "hold for saved emails".
+    /// Same spot and look as the symbol hints on the letter keys.
+    func setEmailBadge(_ on: Bool) {
+        guard on, Self.showHints else {
+            emailBadge?.isHidden = true
+            return
+        }
+        if emailBadge == nil {
+            let badge = UIImageView(image: UIImage(
+                systemName: "envelope.fill",
+                withConfiguration: UIImage.SymbolConfiguration(pointSize: 8, weight: .medium)))
+            badge.tintColor = .tertiaryLabel
+            badge.contentMode = .scaleAspectFit
+            badge.isUserInteractionEnabled = false
+            badge.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(badge)
+            NSLayoutConstraint.activate([
+                badge.topAnchor.constraint(equalTo: topAnchor, constant: 3),
+                badge.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            ])
+            emailBadge = badge
+        }
+        emailBadge?.isHidden = false
+    }
+
     /// Blue key with white text (the return key for Go, Search, Send …).
     var isAccent = false { didSet { updateColor() } }
 
@@ -915,6 +942,7 @@ final class KeyboardViewController: UIInputViewController {
         if leftShown {
             let leftKey = shortcutKey(leftText)
             leftKey.holdsEmails = true
+            leftKey.setEmailBadge(settings.emailMemoryOn)
             bottom.append(leftKey)
         }
 
