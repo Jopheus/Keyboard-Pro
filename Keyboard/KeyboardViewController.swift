@@ -2417,7 +2417,11 @@ final class KeyboardViewController: UIInputViewController {
     /// extension and would not compile). If that fails, the settings open
     /// inside the keyboard instead, as before.
     private func openHostApp() {
-        guard let url = URL(string: "keyboardpro://settings") else { return openSettings() }
+        // Without a shared App Group the app can't change the keyboard's settings,
+        // so the gear opens the settings inside the keyboard instead.
+        guard settings.isShared, let url = URL(string: "keyboardpro://settings") else {
+            return openSettings()
+        }
         let selector = NSSelectorFromString("openURL:options:completionHandler:")
         var responder: UIResponder? = self
         while let current = responder {

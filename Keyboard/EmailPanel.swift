@@ -39,7 +39,7 @@ final class EmailPanel: UIView, UITableViewDataSource, UITableViewDelegate {
         table.backgroundColor = .clear
         table.dataSource = self
         table.delegate = self
-        table.rowHeight = 40
+        table.rowHeight = 48               // tall enough that the text is never clipped
         table.separatorInset = UIEdgeInsets(top: 0, left: 8, bottom: 0, right: 0)
         table.register(UITableViewCell.self, forCellReuseIdentifier: "email")
 
@@ -85,10 +85,7 @@ final class EmailPanel: UIView, UITableViewDataSource, UITableViewDelegate {
         content.text = entry.email
         content.textProperties.font = .systemFont(ofSize: 16)
         content.textProperties.color = .label
-        content.secondaryText = "\(entry.count)×"
-        content.secondaryTextProperties.font = .systemFont(ofSize: 13)
-        content.secondaryTextProperties.color = .secondaryLabel
-        content.prefersSideBySideTextAndSecondaryText = true
+        content.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8)
         cell.contentConfiguration = content
         cell.backgroundColor = .clear
         return cell
