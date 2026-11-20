@@ -138,7 +138,7 @@ final class KBSettings {
 
     /// How long a key must be held before the symbol is typed (milliseconds).
     var longPressMs: Double {
-        get { min(max(double("longPressMs", 250), 150), 800) }
+        get { min(max(double("longPressMs", 300), 150), 800) }
         set { d.set(newValue, forKey: "longPressMs") }
     }
     var suggestionsOn: Bool {

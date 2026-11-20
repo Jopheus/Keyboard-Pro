@@ -186,8 +186,8 @@ final class KeyButton: UIControl {
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -2),
             iconView.centerXAnchor.constraint(equalTo: centerXAnchor),
             iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            // The Paste icon is drawn 25% smaller than other key icons.
-            iconView.heightAnchor.constraint(equalToConstant: kind == .paste ? 15 : 20),
+            // The Paste icon is drawn 40% smaller than other key icons.
+            iconView.heightAnchor.constraint(equalToConstant: kind == .paste ? 12 : 20),
             hintLabel.topAnchor.constraint(equalTo: topAnchor, constant: 1),
             hintLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
         ])
@@ -549,7 +549,7 @@ final class KeyboardViewController: UIInputViewController {
     private var heightConstraint: NSLayoutConstraint?
     private var topConstraint: NSLayoutConstraint?
     private var isLandscape: Bool?
-    private var topInset: CGFloat = 36
+    private var topInset: CGFloat = 30
 
     private var allKeys: [KeyButton] = []
     private var letterKeys: [KeyButton] = []
@@ -659,7 +659,7 @@ final class KeyboardViewController: UIInputViewController {
         rowsStack.translatesAutoresizingMaskIntoConstraints = false
         surface.addSubview(rowsStack)
 
-        let height = view.heightAnchor.constraint(equalToConstant: 298)
+        let height = view.heightAnchor.constraint(equalToConstant: 292)
         height.priority = UILayoutPriority(999)
         let top = rowsStack.topAnchor.constraint(equalTo: surface.topAnchor, constant: topInset)
         heightConstraint = height
@@ -766,11 +766,11 @@ final class KeyboardViewController: UIInputViewController {
 
     private func applyMetrics(landscape: Bool) {
         isLandscape = landscape
-        topInset = landscape ? 26 : 36
+        topInset = landscape ? 26 : 30
         // Max: the key area can be made shorter or taller.
         // Without the number row the keyboard is one (short) row lower.
         let numbers = settings.showNumberRow
-        let base: CGFloat = landscape ? (numbers ? 228 : 192) : (numbers ? 298 : 252)
+        let base: CGFloat = landscape ? (numbers ? 228 : 192) : (numbers ? 292 : 246)
         let scaled = topInset + (base - topInset) * settings.effectiveHeightScale
         heightConstraint?.constant = landscape ? min(scaled, 260) : scaled
         topConstraint?.constant = topInset
@@ -827,7 +827,7 @@ final class KeyboardViewController: UIInputViewController {
         var widths: [NSLayoutConstraint] = []
         func width(_ v: UIView, _ m: CGFloat) {
             widths.append(v.widthAnchor.constraint(equalTo: rowsStack.widthAnchor,
-                                                   multiplier: m, constant: -6))
+                                                   multiplier: m, constant: -6 * (1 - m)))
         }
 
         let rows: [[String]]
@@ -906,7 +906,7 @@ final class KeyboardViewController: UIInputViewController {
             let spacer = UIView()
             spacer.isUserInteractionEnabled = false
             widths.append(spacer.widthAnchor.constraint(equalTo: rowsStack.widthAnchor,
-                                                        multiplier: 0.02, constant: -3))
+                                                        multiplier: 0.02, constant: -2.88))
             return spacer
         }
         register(left)
@@ -2016,9 +2016,9 @@ final class KeyboardViewController: UIInputViewController {
         actionSlot.isHidden = !settings.rowKeyShown
         UIView.performWithoutAnimation {
             if value == KBSettings.pasteAction {
-                // 13 pt: about 25% smaller than the default 17 pt symbol.
+                // 11 pt: about 35% smaller than the default 17 pt symbol.
                 actionSlot.setImage(UIImage(systemName: "doc.on.clipboard",
-                                            withConfiguration: UIImage.SymbolConfiguration(pointSize: 13)),
+                                            withConfiguration: UIImage.SymbolConfiguration(pointSize: 11)),
                                     for: .normal)
                 actionSlot.setTitle(nil, for: .normal)
                 actionSlot.accessibilityLabel = "Paste"
